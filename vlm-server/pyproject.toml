@@ -1,0 +1,8 @@
+[project]
+name = "invoice-ocr-vlm-server"
+version = "0.1.0"
+description = "MLX-VLM inference server for PaddleOCR-VL recognition (4-bit, Apple Silicon)"
+requires-python = ">=3.11"
+dependencies = [
+    "mlx-vlm>=0.3.11",
+]

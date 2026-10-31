@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+frontend/.next/
+frontend/node_modules/
+
+# Eval samples downloaded from third-party datasets (license not cleared for redistribution)
+eval_samples/
+
+# Model caches if kept local
+models/
+
+# OS
+.DS_Store
+
+# Test artifacts
+test-results/
+playwright-report/
+downloads/

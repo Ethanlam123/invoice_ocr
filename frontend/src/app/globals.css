@@ -1,0 +1,70 @@
+:root {
+  --paper: #faf9f7;
+  --surface: #ffffff;
+  --ink: #17171a;
+  --muted: #6f6f76;
+  --faint: #a1a1a8;
+  --hairline: #e6e4de;
+  --hairline-strong: #c9c7c0;
+  --accent: #2e4bdc;
+  --accent-ink: #1e32a4;
+  --accent-soft: rgba(46, 75, 220, 0.07);
+  --accent-fill: rgba(46, 75, 220, 0.12);
+  --danger: #b42318;
+  --danger-soft: #fdf1f0;
+
+  --text-xs: 0.6875rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-display: clamp(1.05rem, 0.9rem + 0.6vw, 1.35rem);
+
+  --radius: 4px;
+  --duration-fast: 150ms;
+  --duration-normal: 300ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --font-display: var(--font-display, "Helvetica Neue", sans-serif);
+  --font-mono: var(--font-mono, "SF Mono", monospace);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-fill);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
