@@ -9,6 +9,9 @@ All inference runs locally. No cloud APIs, no auth, no database.
 
 ## Architecture
 
+An annotated one-page version of this section: [`docs/architecture.html`](docs/architecture.html)
+(open directly in a browser - self-contained, no server needed).
+
 Three local processes. `scripts/dev.sh` starts all of them (and refuses to start
 if any of their ports is already taken).
 

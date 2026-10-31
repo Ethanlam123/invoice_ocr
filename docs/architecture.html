@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Invoice OCR Viewer - system architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #fbfbf8;
+    --ink: #1c2333;
+    --muted: #5c6470;
+    --accent: #2e4bdc;
+    --accent-tint: #e9edfb;
+    --line: #e3e5ec;
+    --frame: #c9cfe8;
+    --gray-fill: #e6e7ea;
+    --gray-edge: #8a8f9c;
+    --sans: "Space Grotesk", system-ui, -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.55;
+  }
+  .page { max-width: 1120px; margin: 0 auto; padding: 48px 28px 40px; }
+  header { display: flex; align-items: flex-start; gap: 18px; border-bottom: 2px solid var(--ink); padding-bottom: 22px; }
+  .mark {
+    flex: none; width: 46px; height: 46px; background: var(--accent); color: #fff;
+    display: grid; place-items: center; font-weight: 700; font-size: 19px; letter-spacing: 0.02em;
+  }
+  h1 { font-size: clamp(26px, 4vw, 38px); line-height: 1.08; margin: 0; letter-spacing: -0.015em; }
+  .sub { color: var(--muted); font-family: var(--mono); font-size: 13px; margin: 8px 0 0; }
+  figure { margin: 26px 0 6px; }
+  svg { width: 100%; height: auto; display: block; }
+  figcaption, .legend { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .legend { margin: 8px 0 0; }
+  .legend .k { color: var(--ink); }
+  section { margin-top: 40px; }
+  h2 { font-size: 20px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 .no { color: var(--accent); font-family: var(--mono); font-size: 14px; margin-right: 8px; }
+  .lede { color: var(--muted); font-size: 14.5px; margin: 0 0 18px; max-width: 70ch; }
+  .stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card {
+    background: #fff; border: 1px solid var(--line); border-top: 3px solid var(--accent);
+    padding: 16px 16px 14px; border-radius: 6px;
+  }
+  .card h3 { margin: 0 0 2px; font-size: 15.5px; }
+  .card .fn { font-family: var(--mono); font-size: 11.5px; color: var(--accent); display: block; margin-bottom: 8px; }
+  .card p { margin: 0; font-size: 13.5px; color: #3a4152; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 28px; }
+  ul { margin: 0; padding-left: 18px; font-size: 14px; color: #3a4152; }
+  li { margin-bottom: 8px; }
+  /* inline code in prose: tinted mono, no pill (pill padding detaches punctuation) */
+  li code, p code { font-family: var(--mono); font-size: 0.88em; color: var(--accent); font-weight: 600; }
+  td code { font-family: var(--mono); font-size: 0.88em; background: var(--accent-tint); padding: 1px 5px; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  td:first-child { font-weight: 700; white-space: nowrap; }
+  .num { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+  footer { margin-top: 44px; border-top: 1px solid var(--line); padding-top: 14px; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  @media print {
+    .page { padding: 12px; }
+    body { background: #fff; }
+    .card, figure { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="mark" aria-hidden="true">IO</div>
+    <div>
+      <h1>Invoice OCR Viewer</h1>
+      <p class="sub">system architecture - PaddleOCR-VL layout (CPU) + MLX recognition - all local, Apple Silicon</p>
+    </div>
+  </header>
+
+  <figure>
+    <svg viewBox="0 0 1240 680" role="img" aria-label="Architecture diagram: browser, four-stage FastAPI backend, MLX-VLM recognition server">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#1c2333" />
+        </marker>
+        <marker id="ahBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#2e4bdc" />
+        </marker>
+      </defs>
+
+      <!-- request / return lanes -->
+      <line x1="230" y1="173" x2="390" y2="173" stroke="#1c2333" stroke-width="1.6" marker-end="url(#ah)" />
+      <text x="308" y="160" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="#1c2333">POST /api/ocr</text>
+      <text x="308" y="191" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="#5c6470">multipart</text>
+
+      <path d="M 560 590 L 560 638 L 135 638 L 135 236" fill="none" stroke="#2e4bdc" stroke-width="2" marker-end="url(#ahBlue)" />
+      <text x="348" y="630" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="#2e4bdc">JSON envelope - image, blocks, raw</text>
+
+      <!-- browser -->
+      <g>
+        <rect x="40" y="113" width="190" height="120" rx="8" fill="#ffffff" stroke="#1c2333" stroke-width="1.5" />
+        <text x="54" y="145" font-family="Space Grotesk, sans-serif" font-weight="700" font-size="17" fill="#1c2333">Browser</text>
+        <text x="54" y="167" font-family="IBM Plex Mono, monospace" font-size="12" fill="#5c6470">:3000 - Next.js 16</text>
+        <text x="54" y="187" font-family="IBM Plex Mono, monospace" font-size="12" fill="#5c6470">upload - run - inspect</text>
+        <text x="54" y="207" font-family="IBM Plex Mono, monospace" font-size="12" fill="#5c6470">SVG box overlay</text>
+      </g>
+
+      <!-- backend container -->
+      <rect x="360" y="70" width="400" height="520" rx="10" fill="#fafafd" stroke="#c9cfe8" stroke-width="1.5" />
+      <text x="560" y="100" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="13" letter-spacing="0.04em" fill="#1c2333">FastAPI - backend/ - :8000</text>
+
+      <!-- stage arrows inside container -->
+      <g stroke="#1c2333" stroke-width="1.5">
+        <line x1="560" y1="216" x2="560" y2="230" marker-end="url(#ah)" />
+        <line x1="560" y1="320" x2="560" y2="334" marker-end="url(#ah)" />
+        <line x1="560" y1="424" x2="560" y2="438" marker-end="url(#ah)" />
+      </g>
+
+      <!-- stage chips -->
+      <g>
+        <rect x="392" y="130" width="336" height="86" rx="6" fill="#e9edfb" stroke="#2e4bdc" stroke-width="1.5" />
+        <text x="410" y="160" font-family="Space Grotesk, sans-serif" font-weight="700" font-size="16" fill="#1c2333"><tspan fill="#2e4bdc">1</tspan> - Upload</text>
+        <text x="410" y="184" font-family="IBM Plex Mono, monospace" font-size="12" fill="#3a4152">read_upload_capped</text>
+        <text x="410" y="202" font-family="IBM Plex Mono, monospace" font-size="12" fill="#5c6470">10 MB capped stream - 413 early</text>
+      </g>
+      <g>
+        <rect x="392" y="234" width="336" height="86" rx="6" fill="#e9edfb" stroke="#2e4bdc" stroke-width="1.5" />
+        <text x="410" y="264" font-family="Space Grotesk, sans-serif" font-weight="700" font-size="16" fill="#1c2333"><tspan fill="#2e4bdc">2</tspan> - Normalize</text>
+        <text x="410" y="288" font-family="IBM Plex Mono, monospace" font-size="12" fill="#3a4152">load_normalized</text>
+        <text x="410" y="306" font-family="IBM Plex Mono, monospace" font-size="12" fill="#5c6470">EXIF-transpose - re-encode PNG</text>
+      </g>
+      <g>
+        <rect x="392" y="338" width="336" height="86" rx="6" fill="#e9edfb" stroke="#2e4bdc" stroke-width="1.5" />
+        <text x="410" y="368" font-family="Space Grotesk, sans-serif" font-weight="700" font-size="16" fill="#1c2333"><tspan fill="#2e4bdc">3</tspan> - Infer</text>
+        <text x="410" y="392" font-family="IBM Plex Mono, monospace" font-size="12" fill="#3a4152">PaddleOCR-VL (CPU) - one at a time</text>
+        <text x="410" y="410" font-family="IBM Plex Mono, monospace" font-size="12" fill="#5c6470">PP-DocLayoutV3 - order - tables</text>
+      </g>
+      <g>
+        <rect x="392" y="442" width="336" height="86" rx="6" fill="#e9edfb" stroke="#2e4bdc" stroke-width="1.5" />
+        <text x="410" y="472" font-family="Space Grotesk, sans-serif" font-weight="700" font-size="16" fill="#1c2333"><tspan fill="#2e4bdc">4</tspan> - Shape</text>
+        <text x="410" y="496" font-family="IBM Plex Mono, monospace" font-size="12" fill="#3a4152">normalize_blocks</text>
+        <text x="410" y="514" font-family="IBM Plex Mono, monospace" font-size="12" fill="#5c6470">blocks - safe tables (nh3)</text>
+      </g>
+
+      <!-- crops edge to VLM -->
+      <line x1="728" y1="381" x2="896" y2="400" stroke="#1c2333" stroke-width="1.6" marker-start="url(#ah)" marker-end="url(#ah)" />
+      <text x="812" y="366" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="#1c2333">block crops / text</text>
+      <text x="812" y="424" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="#5c6470">per-block HTTP</text>
+
+      <!-- VLM server -->
+      <g>
+        <rect x="900" y="330" width="290" height="140" rx="8" fill="#e6e7ea" stroke="#8a8f9c" stroke-width="1.5" stroke-dasharray="6 4" />
+        <text x="916" y="362" font-family="Space Grotesk, sans-serif" font-weight="700" font-size="17" fill="#1c2333">MLX-VLM server</text>
+        <text x="916" y="384" font-family="IBM Plex Mono, monospace" font-size="12" fill="#3a4152">:8111 - recognition only</text>
+        <text x="916" y="404" font-family="IBM Plex Mono, monospace" font-size="12" fill="#5c6470">PaddleOCR-VL 1.6 - 4-bit</text>
+        <text x="916" y="424" font-family="IBM Plex Mono, monospace" font-size="12" fill="#5c6470">mlx 0.32.4 - 0.68 GB</text>
+        <text x="916" y="444" font-family="IBM Plex Mono, monospace" font-size="12" fill="#5c6470">GPU via MLX</text>
+      </g>
+    </svg>
+    <figcaption>One request, end to end. Layout and reading order run inside the backend on CPU; only recognition is delegated to the MLX server.</figcaption>
+    <p class="legend"><span class="k">blue</span> = stages inside the FastAPI backend - <span class="k">blue line</span> = response path - <span class="k">dashed</span> = separate process - <span class="k">white</span> = browser</p>
+  </figure>
+
+  <section>
+    <h2><span class="no">01</span>How a request flows</h2>
+    <p class="lede">The backend owns everything between the upload and the JSON: validation, normalization, inference, and shaping. One <code>asyncio.Lock</code> serializes inference - one page at a time, no queue service.</p>
+    <div class="stages">
+      <div class="card">
+        <h3>1 - Upload</h3>
+        <span class="fn">read_upload_capped</span>
+        <p>The multipart body is streamed in 1 MB chunks with a running 10 MB cap, so an oversize upload fails with 413 before it is ever buffered.</p>
+      </div>
+      <div class="card">
+        <h3>2 - Normalize</h3>
+        <span class="fn">load_normalized</span>
+        <p>Decode by actual content (JPEG or PNG only, never by extension), min 50 px side, max 30 MP. EXIF-transpose, convert to RGB, re-encode as PNG. These exact bytes are what inference sees.</p>
+      </div>
+      <div class="card">
+        <h3>3 - Infer</h3>
+        <span class="fn">RealPipeline</span>
+        <p>Probe the MLX server (<code>/v1/models</code>, 503 if down), then run the PaddleOCR-VL pipeline: PP-DocLayoutV3 layout on CPU, recognition delegated per block to the MLX server. Lazy init, reused across requests; temp files deleted in <code>finally</code>.</p>
+      </div>
+      <div class="card">
+        <h3>4 - Shape</h3>
+        <span class="fn">normalize_blocks</span>
+        <p>Numpy arrays to plain lists, reading order falls back to <code>block_id</code> when null, blocks sorted. Table HTML sanitized server-side with an nh3 allowlist; the temp-file <code>input_path</code> is stripped.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="cols">
+    <div>
+      <h2><span class="no">02</span>Why the boxes always line up</h2>
+      <p class="lede">The coordinate basis is closed by construction:</p>
+      <ul>
+        <li>The backend normalizes the image first and gives those exact PNG bytes to the pipeline.</li>
+        <li>The same bytes come back to the browser as <code>image.data_url</code>.</li>
+        <li><code>block_bbox</code> values are therefore pixels of the displayed image - no conversion, no guessing.</li>
+        <li>The overlay is one SVG with <code>viewBox="0 0 width height"</code> pinned over the <code>img</code>, so boxes stay aligned at any rendered size.</li>
+        <li>Rotation and unwarping are disabled in the pipeline, so no hidden geometry sits between bbox and pixels.</li>
+      </ul>
+    </div>
+    <div>
+      <h2><span class="no">03</span>Trust boundaries</h2>
+      <p class="lede">OCR output and model HTML are treated as untrusted input:</p>
+      <ul>
+        <li>Uploads validated by decode, capped while streaming; CORS limited to localhost:3000.</li>
+        <li>Block text renders as React text nodes (escaped), never as HTML.</li>
+        <li>Table HTML is sanitized server-side (nh3, table-tag allowlist) before any <code>dangerouslySetInnerHTML</code>.</li>
+        <li>Selection sync keys on stable <code>block_id</code>, never on text - documents repeat text.</li>
+        <li>A failed run clears all previous results; no stale output, no fake success.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">04</span>Stack and measured numbers</h2>
+    <p class="lede">Everything below was measured on the demo machine (Apple M2, 16 GB). No accuracy or speed claims beyond these numbers.</p>
+    <table>
+      <thead>
+        <tr><th>Layer</th><th>Technology</th><th>Role</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Viewer</td><td><code>Next.js 16.4.3 - React 19.3</code></td><td>Upload, run, image + reading-order list, bidirectional selection, JSON download</td></tr>
+        <tr><td>API</td><td><code>FastAPI 0.162 - Python 3.11 (uv)</code></td><td>Validation, normalization, orchestration, one response envelope for every outcome</td></tr>
+        <tr><td>Layout</td><td><code>paddleocr 3.7.0 - paddlepaddle 3.2.1 (CPU)</code></td><td>PP-DocLayoutV3: regions, reading order, table structure</td></tr>
+        <tr><td>Recognition</td><td><code>mlx-vlm 0.7.11 - mlx 0.32.4</code></td><td>Serves <code>PaddleOCR-VL-1.6-4bit</code> (0.68 GB) on the GPU, recognition only</td></tr>
+        <tr><td>Latency</td><td><span class="num">12.6 - 21.4 s</span> per page</td><td>12 - 13 blocks on typical invoices and receipts; first request adds about 20 s one-time init</td></tr>
+        <tr><td>Tests</td><td><span class="num">24 + 6 + 4</span></td><td>pytest (stub backend, no model), vitest, Playwright against a mocked API</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>
+    Local only - no cloud APIs, no auth, no database. Generated from the invoice_ocr repository, 2026-11-01.
+  </footer>
+
+</div>
+</body>
+</html>
