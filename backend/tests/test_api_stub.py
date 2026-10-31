@@ -93,6 +93,21 @@ def test_ocr_inference_failure_is_visible(client: TestClient) -> None:
     assert body["error"]["code"] == "inference_failed"
 
 
+def test_ocr_malformed_pipeline_output_returns_envelope(client: TestClient) -> None:
+    class Malformed:
+        async def run(self, png: bytes) -> dict:
+            # block_bbox missing: normalization must fail visibly, not crash to
+            # FastAPI's default 500 body
+            return {"parsing_res_list": [{"block_id": 0, "block_label": "text"}]}
+
+    app.dependency_overrides[get_backend] = lambda: Malformed()
+    r = _post(client, png_bytes(200, 150))
+    assert r.status_code == 500
+    body = r.json()
+    assert body["success"] is False and body["data"] is None
+    assert body["error"]["code"] == "normalization_failed"
+
+
 def test_health(client: TestClient) -> None:
     r = client.get("/api/health")
     assert r.status_code == 200

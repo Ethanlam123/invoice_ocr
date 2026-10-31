@@ -99,3 +99,18 @@ MEDIUM plus three LOWs were fixed and re-verified on 2026-10-31:
 - Remaining accepted risks (documented in README): error messages may embed
   library exception text (localhost-only scope); lazy backend init race made
   negligible via async dependency.
+
+## Post-audit fixes (same day)
+
+A full repo audit found 8 issues (0 must-fix); all fixed:
+
+- normalization failures now return the error envelope (500
+  `normalization_failed`) instead of FastAPI's default body; malformed or
+  non-object pipeline output is covered by a new pytest case (24 total)
+- docs/eval_summary.json scrubbed of dataset-derived field values (booleans
+  kept); eval_dataset.py no longer persists them
+- OCR_BACKEND=stub documented in README (API without any model)
+- module-level imports in main.py; unused generator param removed
+- img width/height set from known dimensions (preview and result) to stop
+  layout jumps; downloadJson defers revokeObjectURL for Safari
+- dev.sh refuses to start when any of its ports is busy

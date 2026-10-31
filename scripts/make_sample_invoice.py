@@ -29,7 +29,7 @@ BOLD_PATHS = [
 ]
 
 
-def load(paths: list[str], size: int, bold_fallback: bool = False) -> ImageFont.FreeTypeFont:
+def load(paths: list[str], size: int) -> ImageFont.FreeTypeFont:
     for p in paths:
         if Path(p).exists():
             return ImageFont.truetype(p, size)

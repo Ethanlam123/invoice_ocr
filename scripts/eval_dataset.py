@@ -90,7 +90,7 @@ def main() -> None:
             "api_elapsed_ms": body["meta"]["elapsed_ms"],
             "blocks": len(data["blocks"]),
             "labels": sorted({b["label"] for b in data["blocks"]}),
-            "reference_fields": ref,
+            # booleans only: dataset values are license-unclear, do not persist them
             "reference_found_in_ocr": checks,
         }
         summary.append(row)

@@ -22,6 +22,7 @@ export default function Home() {
   const [error, setError] = useState<ApiError | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [liveElapsed, setLiveElapsed] = useState(0);
+  const [previewDims, setPreviewDims] = useState<{ width: number; height: number } | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const objectUrlRef = useRef<string | null>(null);
 
@@ -48,6 +49,11 @@ export default function Home() {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     const url = URL.createObjectURL(f);
     objectUrlRef.current = url;
+    setPreviewDims(null);
+    // read the preview's intrinsic size so the img can reserve space (no layout jump)
+    const el = new Image();
+    el.onload = () => setPreviewDims({ width: el.naturalWidth, height: el.naturalHeight });
+    el.src = url;
     setPreviewUrl(url);
   }, []);
 
@@ -87,6 +93,7 @@ export default function Home() {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     objectUrlRef.current = null;
     setPreviewUrl(null);
+    setPreviewDims(null);
   }, []);
 
   const handleListKey = useCallback(
@@ -138,8 +145,8 @@ export default function Home() {
           />
           <ImagePane
             imageUrl={previewUrl}
-            imageWidth={result?.image.width ?? null}
-            imageHeight={result?.image.height ?? null}
+            imageWidth={result?.image.width ?? previewDims?.width ?? null}
+            imageHeight={result?.image.height ?? previewDims?.height ?? null}
             blocks={blocks}
             selectedId={selectedId}
             onSelect={setSelectedId}

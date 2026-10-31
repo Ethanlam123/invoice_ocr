@@ -28,7 +28,12 @@ export default function ImagePane({
         <figure className="image-frame">
           <div className="image-holder">
             {/* eslint-disable-next-line @next/next/no-img-element -- local blob/data URL, not a managed asset */}
-            <img src={imageUrl} alt="Uploaded document" />
+            <img
+              src={imageUrl}
+              alt="Uploaded document"
+              width={imageWidth ?? undefined}
+              height={imageHeight ?? undefined}
+            />
             {hasOverlay && (
               <svg
                 className="overlay"

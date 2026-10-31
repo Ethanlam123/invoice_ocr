@@ -35,7 +35,8 @@ export function downloadJson(data: unknown, filename: string): void {
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+  // shortcut: Safari can drop the blob if revoked before the download starts; defer
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function resultFilename(): string {

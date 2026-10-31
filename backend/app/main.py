@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import time
+import urllib.request
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request, UploadFile
@@ -60,15 +62,14 @@ async def health(backend: BackendDep) -> Envelope:
 
 
 async def _vlm_reachable() -> bool:
-    import urllib.request
-
     url = config.VLM_SERVER_URL.rstrip("/") + "/v1/models"
-    try:
-        def _probe() -> None:
-            with urllib.request.urlopen(url, timeout=3) as resp:
-                resp.read(64)
 
-        await __import__("asyncio").to_thread(_probe)
+    def _probe() -> None:
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            resp.read(64)
+
+    try:
+        await asyncio.to_thread(_probe)
         return True
     except Exception:
         return False
@@ -92,14 +93,14 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
         return fail(status, exc.code, exc.message)
     elapsed_ms = round((time.perf_counter() - started) * 1000)
 
-    # raw pipeline JSON minus the backend's temp-file path
-    raw = {k: v for k, v in raw.items() if k != "input_path"}
-
-    # pipeline JSON may nest single-image results under "res"
-    res = raw.get("res", raw) if isinstance(raw, dict) else {}
-    return Envelope(
-        success=True,
-        data=OcrData(
+    try:
+        # raw pipeline JSON minus the backend's temp-file path
+        raw = {k: v for k, v in raw.items() if k != "input_path"}
+        if not isinstance(raw, dict):
+            raise ValueError(f"pipeline result is a {type(raw).__name__}, not an object")
+        # pipeline JSON may nest single-image results under "res"
+        res = raw.get("res", raw)
+        data = OcrData(
             image=ImageOut(
                 width=img.width,
                 height=img.height,
@@ -109,7 +110,12 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
             blocks=normalize_blocks(res),
             markdown=markdown_text(res),
             raw=raw,
-        ),
+        )
+    except Exception as exc:
+        return fail(500, "normalization_failed", f"Failed to normalize pipeline output: {exc}")
+    return Envelope(
+        success=True,
+        data=data,
         meta={
             "elapsed_ms": elapsed_ms,
             "model": config.MODEL_NAME if backend.mode == "real" else "stub",

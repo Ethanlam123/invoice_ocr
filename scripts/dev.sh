@@ -7,6 +7,13 @@ cd "$(dirname "$0")/.."
 MODEL="${VLM_MODEL_NAME:-mlx-community/PaddleOCR-VL-1.6-4bit}"
 VLM_PORT="${VLM_PORT:-8111}"
 
+for port in "$VLM_PORT" 8000 3000; do
+  if lsof -ti "tcp:$port" >/dev/null 2>&1; then
+    echo "port $port is already in use - stop the running services first" >&2
+    exit 1
+  fi
+done
+
 echo "1/3 MLX-VLM server (model: $MODEL, port $VLM_PORT)"
 uv run --project vlm-server mlx_vlm.server --port "$VLM_PORT" --model "$MODEL" \
   > /tmp/invoice-ocr-vlm.log 2>&1 &

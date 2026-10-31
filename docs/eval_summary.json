@@ -9,10 +9,6 @@
       "table",
       "text"
     ],
-    "reference_fields": {
-      "invoice_no": "40378170",
-      "invoice_date": "10/15/2012"
-    },
     "reference_found_in_ocr": {
       "invoice_no": true,
       "invoice_date": true
@@ -28,10 +24,6 @@
       "table",
       "text"
     ],
-    "reference_fields": {
-      "invoice_no": "61356291",
-      "invoice_date": "09/06/2012"
-    },
     "reference_found_in_ocr": {
       "invoice_no": true,
       "invoice_date": true
@@ -48,10 +40,6 @@
       "table",
       "text"
     ],
-    "reference_fields": {
-      "invoice_no": "39280409",
-      "invoice_date": "07/06/2014"
-    },
     "reference_found_in_ocr": {
       "invoice_no": true,
       "invoice_date": true
@@ -68,10 +56,6 @@
       "table",
       "text"
     ],
-    "reference_fields": {
-      "invoice_no": "27301261",
-      "invoice_date": "10/09/2012"
-    },
     "reference_found_in_ocr": {
       "invoice_no": true,
       "invoice_date": true
@@ -88,10 +72,6 @@
       "table",
       "text"
     ],
-    "reference_fields": {
-      "invoice_no": "10823698",
-      "invoice_date": "09/26/2020"
-    },
     "reference_found_in_ocr": {
       "invoice_no": true,
       "invoice_date": true

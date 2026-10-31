@@ -73,6 +73,13 @@ pipeline (~20 s one-time). Open http://localhost:3000.
 Health check: `curl localhost:8000/api/health` (reports whether the VLM server is
 reachable).
 
+Frontend work without any model: start only the API in stub mode - it returns
+deterministic fake blocks and needs neither the MLX server nor the layout model:
+
+```bash
+(cd backend && OCR_BACKEND=stub uv run uvicorn app.main:app --port 8000)
+```
+
 ## Usage
 
 1. Drop or choose a JPG/PNG (max 10 MB, 30 MP, min 50 px side).
