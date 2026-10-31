@@ -13,27 +13,47 @@ Three local processes. `scripts/dev.sh` starts all of them (and refuses to start
 if any of their ports is already taken).
 
 ```mermaid
-flowchart TD
-    UI["Browser · frontend/<br/>Next.js 16 · localhost:3000"]
+%%{init: {"flowchart": {"curve": "linear", "nodeSpacing": 48, "rankSpacing": 64, "padding": 18}, "themeVariables": {"fontSize": "15px"}}}%%
+flowchart TB
+    UI["Browser · :3000<br/>Next.js viewer"]
+    S1["1 · Upload<br/>capped stream"]
+    S2["2 · Normalize<br/>EXIF to PNG"]
+    S3["3 · Infer<br/>PaddleOCR-VL · CPU<br/>one at a time"]
+    S4["4 · Shape<br/>blocks, safe tables"]
+    VLM["MLX-VLM server · :8111<br/>PaddleOCR-VL 1.6 · 4-bit<br/>recognition only"]
 
-    subgraph backend["FastAPI · backend/ · localhost:8000"]
-        direction TB
-        UP["1 upload · read_upload_capped<br/>1 MB chunks, running 10 MB cap (413 early)"]
-        NORM["2 normalize · load_normalized<br/>decode by content, JPEG/PNG only, min 50 px, max 30 MP<br/>EXIF-transpose, RGB, re-encode PNG"]
-        PIPE["3 inference · RealPipeline<br/>lazy init, reused across requests<br/>asyncio.Lock: one inference at a time"]
-        SHAPE["4 shape · normalize_blocks + sanitize<br/>numpy to list, order fallback, sort<br/>table HTML cleaned (nh3) · input_path stripped"]
-        UP --> NORM --> PIPE --> SHAPE
-    end
+    UI -->|"POST /api/ocr"| S1
+    S1 --> S2 --> S3 --> S4
+    S4 -->|"results"| UI
+    S3 <-->|"block crops / text"| VLM
 
-    LAYOUT["PaddleOCRVL in-process (CPU)<br/>paddleocr 3.7.0 / paddlepaddle 3.2.1<br/>PP-DocLayoutV3: layout, reading order, table HTML"]
-    VLM["MLX-VLM server · vlm-server/ · localhost:8111<br/>mlx-vlm 0.7.11 / mlx 0.32.4 · recognition only<br/>mlx-community/PaddleOCR-VL-1.6-4bit (0.68 GB)"]
-
-    UI -->|"POST /api/ocr (multipart)"| UP
-    PIPE -.->|"probe /v1/models (503 if down)"| VLM
-    PIPE --> LAYOUT
-    LAYOUT -->|"block crops over HTTP"| VLM
-    SHAPE -->|"envelope: image.data_url + blocks + raw"| UI
+    classDef browser fill:#ffffff,stroke:#1c2333,color:#1c2333,stroke-width:1.5px
+    classDef stage fill:#e9edfb,stroke:#2e4bdc,color:#1c2333
+    classDef model fill:#e6e7ea,stroke:#8a8f9c,color:#1c2333,stroke-dasharray:5 4
+    class UI browser
+    class S1,S2,S3,S4 stage
+    class VLM model
+    linkStyle default stroke:#6b7280,stroke-width:1.5px
+    linkStyle 4 stroke:#2e4bdc,stroke-width:2px
 ```
+
+Legend: blue = the four stages inside the FastAPI backend (`backend/`,
+:8000); dashed gray = the one separate process it talks to. Layout
+(PP-DocLayoutV3) runs in-process on CPU, so it is part of stage 3, not a
+separate box.
+
+Stage detail (numbers match the diagram):
+
+1. `read_upload_capped` - streams the body in 1 MB chunks with a running 10 MB
+   cap, so oversize uploads fail with 413 before being buffered.
+2. `load_normalized` - decodes by content (JPEG/PNG only, min 50 px side,
+   max 30 MP), EXIF-transposes, converts to RGB, re-encodes as PNG.
+3. `RealPipeline` - probes the MLX server (`/v1/models`, 503 if down), then
+   runs PaddleOCRVL (PP-DocLayoutV3 layout on CPU, recognition delegated to the
+   MLX server): lazy init, reused across requests; an asyncio.Lock allows one
+   inference at a time; temp files deleted in finally.
+4. `normalize_blocks` - numpy arrays to lists, order falls back to `block_id`,
+   blocks sorted; table HTML sanitized (nh3); `input_path` stripped.
 
 The MLX-VLM server handles recognition only. The full pipeline (layout, reading
 order, table structuring) runs in the backend via `PaddleOCRVL`, which calls the
