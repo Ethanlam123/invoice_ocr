@@ -9,29 +9,114 @@ All inference runs locally. No cloud APIs, no auth, no database.
 
 ## Architecture
 
+Three local processes. `scripts/dev.sh` starts all of them (and refuses to start
+if any of their ports is already taken).
+
 ```
-Next.js (localhost:3000)                 your browser
+Browser (localhost:3000)                 frontend/   Next.js 16 + React 19
    |
-   | POST /api/ocr (multipart image)
+   | POST /api/ocr  (multipart image)    lib/api.ts: runOcr(), 5 min timeout
    v
-FastAPI (localhost:8000)                 backend/
-   |- validate + EXIF-normalize + re-encode (Pillow)
-   |- PaddleOCRVL pipeline                paddleocr 3.7.0 / paddlepaddle 3.2.1 (CPU)
-   |     layout: PP-DocLayoutV3 (CPU)     auto-downloaded on first run
-   |     recognition: MLX-VLM server ----> vlm-server/
-   |- normalize blocks + sanitize table HTML (nh3)
+FastAPI (localhost:8000)                 backend/    uv project
    |
+   |- 1 upload      read_upload_capped() reads the body in 1 MB chunks with a
+   |                 running 10 MB cap -> 413 before buffering (app/images.py)
+   |- 2 normalize   load_normalized(): decode (format by content, not extension),
+   |                 JPEG/PNG only, min side 50 px, max 30 MP,
+   |                 EXIF-transpose -> RGB -> re-encode PNG (app/images.py)
+   |- 3 inference   RealPipeline (app/pipeline.py)
+   |                 |- lazy PaddleOCRVL init, reused across requests
+   |                 |- probe MLX server /v1/models -> 503 if down
+   |                 |- asyncio.Lock: one inference at a time, predict in a thread
+   |                 |- temp PNG + JSON files deleted in finally
+   |                 PaddleOCRVL  paddleocr 3.7.0 / paddlepaddle 3.2.1
+   |                   layout + reading order + table HTML: PP-DocLayoutV3 (CPU)
+   |                   recognition: HTTP ->
+   |- 4 shape        strip input_path, normalize_blocks(): numpy -> list, order
+   |                 fallback, sort; table HTML sanitized with nh3 allowlist
+   |                 (app/blocks.py)
    v
-MLX-VLM server (localhost:8111)          mlx-vlm 0.7.11 / mlx 0.32.4
+MLX-VLM server (localhost:8111)          vlm-server/  uv project
+   mlx-vlm 0.7.11 / mlx 0.32.4           recognition ONLY
    model: mlx-community/PaddleOCR-VL-1.6-4bit (0.68 GB)
 ```
 
-- The MLX-VLM server handles recognition only. The full pipeline (layout, reading
-  order, table structuring) runs in the backend via `PaddleOCRVL`.
-- `block_bbox` coordinates refer to the EXIF-normalized PNG the backend returns in
-  the same response, so the SVG overlay always matches the displayed image.
-- One inference at a time (process-wide lock). The pipeline and model server are
-  reused across requests.
+The MLX-VLM server handles recognition only. The full pipeline (layout, reading
+order, table structuring) runs in the backend via `PaddleOCRVL`, which calls the
+server with `vl_rec_backend="mlx-vlm-server"`.
+
+### Coordinate guarantee
+
+`block_bbox` values are pixels of the exact PNG that inference ran on: the
+backend EXIF-normalizes and re-encodes first, gives those bytes to the pipeline,
+and returns the same bytes as `image.data_url`. The frontend draws one SVG with
+`viewBox="0 0 width height"` absolutely positioned over that `<img>`, so boxes
+stay aligned at any rendered size - no pixel math, no resize handling.
+
+### Response contract
+
+Every endpoint returns one envelope. `POST /api/ocr` on success:
+
+```json
+{ "success": true,
+  "data": {
+    "image":   { "width": 1240, "height": 1600, "mime": "image/png", "data_url": "..." },
+    "blocks":  [ { "id": 0, "order": 0, "label": "table",
+                   "bbox": [78, 498, 1171, 916],
+                   "content": "<table>...</table>",
+                   "content_html": "<table>...</table>" } ],
+    "markdown": "...",
+    "raw":     { "parsing_res_list": [...], "layout_det_res": [...] } },
+  "error": null,
+  "meta": { "elapsed_ms": 20601, "model": "mlx-community/PaddleOCR-VL-1.6-4bit", "mode": "real" } }
+```
+
+- `id` is the pipeline `block_id` - the stable key for left/right selection sync
+  (never text matching; documents can repeat text).
+- `order` falls back to `block_id` when `block_order` is null (header/table/footer).
+- `content_html` exists only for table blocks, after server-side nh3 sanitization.
+  All other block text is rendered as React text nodes (escaped).
+- `raw` is the untouched pipeline result minus `input_path` (temp-file path).
+  Download JSON in the UI writes exactly this object.
+
+Error envelope: `{ "success": false, "data": null, "error": { "code", "message" } }`.
+
+| HTTP | code | when |
+| ---- | ---- | ---- |
+| 400 | `undecodable` / `unsupported_format` / `too_small` / `too_many_pixels` | upload fails validation |
+| 413 | `file_too_large` | over 10 MB, caught while streaming |
+| 422 | `invalid_request` | missing `file` multipart field |
+| 503 | `vlm_server_unreachable` / `pipeline_unavailable` / `pipeline_init_failed` | model side not runnable |
+| 500 | `inference_failed` / `normalization_failed` | pipeline error or malformed output |
+| - | `timeout` / `network_error` | client-side (fetch failed or 5 min cap) |
+
+### Configuration
+
+| Variable | Default | Used by |
+| -------- | ------- | ------- |
+| `VLM_SERVER_URL` | `http://localhost:8111/` | backend: where PaddleOCRVL sends recognition |
+| `VLM_MODEL_NAME` | `mlx-community/PaddleOCR-VL-1.6-4bit` | backend: model name passed to the server |
+| `OCR_BACKEND` | `real` | backend: `stub` returns deterministic fake results, no model |
+| `NEXT_PUBLIC_API_BASE` | `http://localhost:8000` | frontend: API base URL |
+
+CORS allows only `localhost:3000` / `127.0.0.1:3000`.
+
+### Repository layout
+
+```
+backend/     FastAPI app: main.py (routes), images.py (validation/EXIF),
+             pipeline.py (real + stub backends), blocks.py (normalize/sanitize),
+             schemas.py (envelope), config.py; tests/ (pytest, stub-only)
+vlm-server/  uv project holding only mlx-vlm (isolated from paddle deps)
+frontend/    Next.js app: app/page.tsx (state machine),
+             components/ocr-viewer/ (UploadPanel, ImagePane+SVG overlay,
+             BlockList, StatusBar, ErrorBanner), lib/ (api, types, blocks)
+scripts/     dev.sh, make_sample_invoice.py, run_real_inference.py,
+             eval_dataset.py
+e2e/         Playwright specs against a mocked /api/ocr
+docs/        VALIDATION.md (real-inference log), eval_summary.json (booleans)
+samples/     our own PIL-generated test invoice (committable)
+```
 
 ## Requirements
 
