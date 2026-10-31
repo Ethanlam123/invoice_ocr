@@ -12,33 +12,27 @@ All inference runs locally. No cloud APIs, no auth, no database.
 Three local processes. `scripts/dev.sh` starts all of them (and refuses to start
 if any of their ports is already taken).
 
-```
-Browser (localhost:3000)                 frontend/   Next.js 16 + React 19
-   |
-   | POST /api/ocr  (multipart image)    lib/api.ts: runOcr(), 5 min timeout
-   v
-FastAPI (localhost:8000)                 backend/    uv project
-   |
-   |- 1 upload      read_upload_capped() reads the body in 1 MB chunks with a
-   |                 running 10 MB cap -> 413 before buffering (app/images.py)
-   |- 2 normalize   load_normalized(): decode (format by content, not extension),
-   |                 JPEG/PNG only, min side 50 px, max 30 MP,
-   |                 EXIF-transpose -> RGB -> re-encode PNG (app/images.py)
-   |- 3 inference   RealPipeline (app/pipeline.py)
-   |                 |- lazy PaddleOCRVL init, reused across requests
-   |                 |- probe MLX server /v1/models -> 503 if down
-   |                 |- asyncio.Lock: one inference at a time, predict in a thread
-   |                 |- temp PNG + JSON files deleted in finally
-   |                 PaddleOCRVL  paddleocr 3.7.0 / paddlepaddle 3.2.1
-   |                   layout + reading order + table HTML: PP-DocLayoutV3 (CPU)
-   |                   recognition: HTTP ->
-   |- 4 shape        strip input_path, normalize_blocks(): numpy -> list, order
-   |                 fallback, sort; table HTML sanitized with nh3 allowlist
-   |                 (app/blocks.py)
-   v
-MLX-VLM server (localhost:8111)          vlm-server/  uv project
-   mlx-vlm 0.7.11 / mlx 0.32.4           recognition ONLY
-   model: mlx-community/PaddleOCR-VL-1.6-4bit (0.68 GB)
+```mermaid
+flowchart TD
+    UI["Browser · frontend/<br/>Next.js 16 · localhost:3000"]
+
+    subgraph backend["FastAPI · backend/ · localhost:8000"]
+        direction TB
+        UP["1 upload · read_upload_capped<br/>1 MB chunks, running 10 MB cap (413 early)"]
+        NORM["2 normalize · load_normalized<br/>decode by content, JPEG/PNG only, min 50 px, max 30 MP<br/>EXIF-transpose, RGB, re-encode PNG"]
+        PIPE["3 inference · RealPipeline<br/>lazy init, reused across requests<br/>asyncio.Lock: one inference at a time"]
+        SHAPE["4 shape · normalize_blocks + sanitize<br/>numpy to list, order fallback, sort<br/>table HTML cleaned (nh3) · input_path stripped"]
+        UP --> NORM --> PIPE --> SHAPE
+    end
+
+    LAYOUT["PaddleOCRVL in-process (CPU)<br/>paddleocr 3.7.0 / paddlepaddle 3.2.1<br/>PP-DocLayoutV3: layout, reading order, table HTML"]
+    VLM["MLX-VLM server · vlm-server/ · localhost:8111<br/>mlx-vlm 0.7.11 / mlx 0.32.4 · recognition only<br/>mlx-community/PaddleOCR-VL-1.6-4bit (0.68 GB)"]
+
+    UI -->|"POST /api/ocr (multipart)"| UP
+    PIPE -.->|"probe /v1/models (503 if down)"| VLM
+    PIPE --> LAYOUT
+    LAYOUT -->|"block crops over HTTP"| VLM
+    SHAPE -->|"envelope: image.data_url + blocks + raw"| UI
 ```
 
 The MLX-VLM server handles recognition only. The full pipeline (layout, reading
