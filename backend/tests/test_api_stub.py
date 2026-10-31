@@ -58,6 +58,28 @@ def test_ocr_rejects_oversize(client: TestClient, monkeypatch: pytest.MonkeyPatc
     assert r.json()["error"]["code"] == "file_too_large"
 
 
+def test_ocr_rejects_oversized_stream_before_buffering(client: TestClient) -> None:
+    # 11 MB garbage: must hit the running byte cap, not be buffered and decoded
+    r = _post(client, b"\x89PNG" + b"x" * (11 * 1024 * 1024))
+    assert r.status_code == 413
+    assert r.json()["error"]["code"] == "file_too_large"
+
+
+def test_ocr_response_strips_internal_temp_path(client: TestClient) -> None:
+    r = _post(client, png_bytes(200, 150))
+    raw = r.json()["data"]["raw"]
+    assert "input_path" not in raw
+    assert "parsing_res_list" in raw
+
+
+def test_ocr_missing_file_field_returns_envelope(client: TestClient) -> None:
+    r = client.post("/api/ocr")
+    assert r.status_code == 422
+    body = r.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "invalid_request"
+
+
 def test_ocr_inference_failure_is_visible(client: TestClient) -> None:
     class Broken:
         async def run(self, png: bytes) -> dict:

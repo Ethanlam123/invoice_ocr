@@ -78,6 +78,10 @@
   background: var(--accent-soft);
 }
 
+.dropzone-disabled {
+  opacity: 0.55;
+}
+
 .dropzone-title {
   font-weight: 600;
   font-size: var(--text-sm);

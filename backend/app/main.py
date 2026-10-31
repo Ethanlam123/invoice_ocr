@@ -6,13 +6,14 @@ import base64
 import time
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, UploadFile
+from fastapi import Depends, FastAPI, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import config
 from .blocks import markdown_text, normalize_blocks
-from .images import ImageValidationError, load_normalized
+from .images import ImageValidationError, load_normalized, read_upload_capped
 from .pipeline import InferenceError, OcrBackend, build_backend
 from .schemas import Envelope, ErrorOut, ImageOut, OcrData
 
@@ -25,7 +26,8 @@ app.add_middleware(
 )
 
 
-def get_backend() -> OcrBackend:
+async def get_backend() -> OcrBackend:
+    # async dependency: first-request init cannot race in the event loop
     backend: OcrBackend | None = getattr(app.state, "backend", None)
     if backend is None:
         backend = build_backend()
@@ -39,6 +41,12 @@ BackendDep = Annotated[OcrBackend, Depends(get_backend)]
 def fail(status: int, code: str, message: str) -> JSONResponse:
     body = Envelope(success=False, error=ErrorOut(code=code, message=message))
     return JSONResponse(status_code=status, content=body.model_dump())
+
+
+@app.exception_handler(RequestValidationError)
+async def on_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # keep the error envelope shape for FastAPI's own 422s (e.g. missing file part)
+    return fail(422, "invalid_request", "Request must include a 'file' multipart field.")
 
 
 @app.get("/api/health")
@@ -68,8 +76,8 @@ async def _vlm_reachable() -> bool:
 
 @app.post("/api/ocr")
 async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
-    data = await file.read()
     try:
+        data = await read_upload_capped(file)
         img = load_normalized(data)
     except ImageValidationError as exc:
         status = 413 if exc.code == "file_too_large" else 400
@@ -83,6 +91,9 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
                                       "pipeline_init_failed") else 500
         return fail(status, exc.code, exc.message)
     elapsed_ms = round((time.perf_counter() - started) * 1000)
+
+    # raw pipeline JSON minus the backend's temp-file path
+    raw = {k: v for k, v in raw.items() if k != "input_path"}
 
     # pipeline JSON may nest single-image results under "res"
     res = raw.get("res", raw) if isinstance(raw, dict) else {}

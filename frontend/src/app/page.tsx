@@ -34,6 +34,11 @@ export default function Home() {
   );
 
   const handleFile = useCallback((f: File) => {
+    // stop any in-flight run's timer so it cannot leak into the next session
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
     setFile(f);
     setResult(null);
     setMeta(null);

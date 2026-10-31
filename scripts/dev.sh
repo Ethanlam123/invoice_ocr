@@ -12,7 +12,7 @@ uv run --project vlm-server mlx_vlm.server --port "$VLM_PORT" --model "$MODEL" \
   > /tmp/invoice-ocr-vlm.log 2>&1 &
 
 echo "2/3 FastAPI backend (port 8000) - waits for VLM"
-uv run --project backend uvicorn app.main:app --port 8000 \
+(cd backend && uv run uvicorn app.main:app --port 8000) \
   > /tmp/invoice-ocr-backend.log 2>&1 &
 
 echo "3/3 Next.js frontend (port 3000)"

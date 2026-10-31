@@ -186,3 +186,30 @@ test("failed run shows a visible error and no stale results", async ({ page }) =
   await expect(page.locator(".overlay-rect")).toHaveCount(0);
   await expect(page.getByText("5 blocks in")).toHaveCount(0);
 });
+
+test("upload stays locked during processing; a file change cannot race the run", async ({
+  page,
+}) => {
+  let release: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/ocr", async (route) => {
+    await held; // hold the run in "processing" phase
+    await route.fulfill({ json: envelope() });
+  });
+  await page.goto("/");
+  await page.setInputFiles('input[type="file"]', FIXTURE);
+  await page.getByRole("button", { name: "Run OCR" }).click();
+  await expect(page.locator(".spinner")).toBeVisible();
+
+  // upload surface is locked while a run is in flight
+  await expect(page.locator(".dropzone")).toHaveAttribute("aria-disabled", "true");
+  await expect(page.getByRole("button", { name: "Choose file" })).toBeDisabled();
+  // a programmatic file change fires change but the handler ignores it while disabled
+  await page.setInputFiles('input[type="file"]', FIXTURE);
+
+  release?.();
+  await expect(page.getByText("5 blocks in")).toBeVisible();
+  await expect(page.locator(".block-item")).toHaveCount(5);
+});

@@ -120,6 +120,7 @@ class StubPipeline(OcrBackend):
         with Image.open(io.BytesIO(png)) as im:
             w, h = im.size
         return {
+            "input_path": "/tmp/stub-should-be-stripped.png",
             "parsing_res_list": [
                 {
                     "block_id": 0,

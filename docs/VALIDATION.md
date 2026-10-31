@@ -73,7 +73,29 @@ smoke-level agreement signal between our run and the stored annotations
 
 ## Automated suites (no model involved)
 
-- backend: 20 pytest tests green (validation, sanitization, envelope, stub API)
+- backend: 23 pytest tests green (validation, sanitization, envelope, stub API,
+  chunked upload cap, input_path strip, 422 envelope)
 - frontend: 6 vitest tests green (rect math, id stepping, filename)
-- e2e: 3 Playwright tests green against mocked /api/ocr (sync by id with duplicate
-  text, escaped HTML, resize alignment, failure clears stale results)
+- e2e: 4 Playwright tests green against mocked /api/ocr (sync by id with duplicate
+  text, escaped HTML, resize alignment, failure clears stale results, upload
+  locked during processing)
+
+## Post-review fixes and re-verification
+
+An independent code review flagged 2 HIGH / 1 MEDIUM / 4 LOW issues; all HIGH and
+MEDIUM plus three LOWs were fixed and re-verified on 2026-10-31:
+
+- scripts/dev.sh backend launch failed from repo root (ModuleNotFoundError) - now
+  runs uvicorn from backend/; re-tested with a full clean start of all three
+  services and a real 21.4 s inference through that stack.
+- upload/replace stayed live during processing (stale cross-file results, double
+  run, orphaned interval) - upload surface now disabled while processing; e2e
+  regression test added holding the response and attempting a file swap.
+- oversized request bodies were fully buffered before the size cap - now read in
+  1 MB chunks with a running cap (413 before buffering).
+- API response no longer contains the backend temp-file path (input_path).
+- FastAPI 422s (missing file field) now return the standard error envelope.
+- frontend request now has a 5 min timeout with a distinct timeout error.
+- Remaining accepted risks (documented in README): error messages may embed
+  library exception text (localhost-only scope); lazy backend init race made
+  negligible via async dependency.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
+from typing import Protocol
 
 from PIL import Image, ImageOps
 
@@ -29,6 +30,26 @@ class NormalizedImage:
     png: bytes
     width: int
     height: int
+
+
+class AsyncReader(Protocol):
+    async def read(self, size: int = -1) -> bytes: ...
+
+
+async def read_upload_capped(file: AsyncReader) -> bytes:
+    """Read an upload in chunks, rejecting oversized bodies before buffering
+    them fully into memory (the multipart body has no server-side cap)."""
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(1 << 20):
+        total += len(chunk)
+        if total > config.MAX_FILE_BYTES:
+            raise ImageValidationError(
+                "file_too_large",
+                f"File exceeds {config.MAX_FILE_BYTES // (1024 * 1024)} MB limit.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def load_normalized(data: bytes) -> NormalizedImage:

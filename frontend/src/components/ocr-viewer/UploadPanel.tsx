@@ -20,6 +20,7 @@ export default function UploadPanel({ phase, disabled, onFile, onRun }: UploadPa
   const [localError, setLocalError] = useState<string | null>(null);
 
   function accept(file: File | undefined | null) {
+    if (disabled) return;
     if (!file) return;
     // Quick client feedback only; the API re-validates by decoding the file.
     if (!ACCEPTED_TYPES.includes(file.type)) {
@@ -37,10 +38,11 @@ export default function UploadPanel({ phase, disabled, onFile, onRun }: UploadPa
   return (
     <div className="upload-panel">
       <div
-        className={`dropzone ${dragOver ? "dropzone-active" : ""}`}
+        className={`dropzone ${dragOver ? "dropzone-active" : ""} ${disabled ? "dropzone-disabled" : ""}`}
+        aria-disabled={disabled}
         onDragOver={(e) => {
           e.preventDefault();
-          setDragOver(true);
+          if (!disabled) setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => {
@@ -51,7 +53,12 @@ export default function UploadPanel({ phase, disabled, onFile, onRun }: UploadPa
       >
         <p className="dropzone-title">Drop an invoice or receipt</p>
         <p className="dropzone-hint">JPG or PNG, up to 10 MB, single page</p>
-        <button type="button" className="btn" onClick={() => inputRef.current?.click()}>
+        <button
+          type="button"
+          className="btn"
+          disabled={disabled}
+          onClick={() => inputRef.current?.click()}
+        >
           Choose file
         </button>
         <input
@@ -59,6 +66,7 @@ export default function UploadPanel({ phase, disabled, onFile, onRun }: UploadPa
           type="file"
           accept="image/jpeg,image/png"
           hidden
+          disabled={disabled}
           onChange={(e) => {
             accept(e.target.files?.[0]);
             e.target.value = "";

@@ -62,7 +62,7 @@ Or manually:
 
 ```bash
 uv run --project vlm-server mlx_vlm.server --port 8111 --model mlx-community/PaddleOCR-VL-1.6-4bit
-uv run --project backend uvicorn app.main:app --port 8000
+(cd backend && uv run uvicorn app.main:app --port 8000)
 cd frontend && npm run dev
 ```
 
@@ -121,3 +121,5 @@ stored annotations are used only as a labeled reference (`ast.literal_eval`, nev
 - First inference after boot pays one-time model init (~20 s).
 - If the VLM server is down, requests fail with `vlm_server_unreachable` (503);
   nothing is cached between runs.
+- Error messages may include underlying library exception text - fine for a
+  localhost demo, not for exposing beyond loopback.
