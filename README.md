@@ -11,7 +11,7 @@ All inference runs locally. No cloud APIs, no auth, no database.
 
 An annotated one-page version of this section: [`docs/architecture.html`](docs/architecture.html)
 (open directly in a browser - self-contained, no server needed), also exported to
-[`docs/architecture.pdf`](docs/architecture.pdf) (single tall page, full-size text;
+[`docs/architecture.pdf`](docs/architecture.pdf) (A4, 3 pages, natural size;
 regenerate with `node scripts/export_architecture_pdf.mjs`).
 
 Three local processes. `scripts/dev.sh` starts all of them (and refuses to start

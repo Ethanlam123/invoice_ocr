@@ -67,9 +67,14 @@
   .num { font-family: var(--mono); color: var(--accent); font-weight: 600; }
   footer { margin-top: 44px; border-top: 1px solid var(--line); padding-top: 14px; color: var(--muted); font-family: var(--mono); font-size: 12px; }
   @media print {
-    .page { padding: 12px; }
+    .page { padding: 0; }
     body { background: #fff; }
-    .card, figure { break-inside: avoid; }
+    .card, figure, section, .cols { break-inside: avoid; }
+    h2 { break-after: avoid; }
+    h2 .no { break-after: avoid; }
+    table { break-inside: auto; }
+    thead { display: table-row-group; }
+    tr { break-inside: avoid; }
   }
 </style>
 </head>
