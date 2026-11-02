@@ -18,5 +18,11 @@ MAX_PIXELS = 30_000_000
 MIN_SIDE = 50
 ALLOWED_FORMATS = frozenset({"JPEG", "PNG"})
 
+# PDF uploads: pages are rendered here and fed to the pipeline page by page,
+# so block_bbox keeps referring to pixels we also return as page images.
+PDF_MAGIC = b"%PDF-"
+PDF_RENDER_DPI = 150
+MAX_PDF_PAGES = 8  # 8 pages x ~20 s stays under the 5 min client timeout
+
 # CORS: local dev frontend only
 ALLOWED_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")

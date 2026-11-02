@@ -65,3 +65,53 @@ def test_file_too_large_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ImageValidationError) as ei:
         load_normalized(png_bytes(200, 150))
     assert ei.value.code == "file_too_large"
+
+
+def _pdf(pages: list[tuple[int, int]]) -> bytes:
+    imgs = [Image.new("RGB", size, "white") for size in pages]
+    buf = io.BytesIO()
+    imgs[0].save(buf, save_all=True, append_images=imgs[1:], format="PDF", resolution=150)
+    return buf.getvalue()
+
+
+def test_is_pdf_magic() -> None:
+    from app.images import is_pdf
+
+    assert is_pdf(b"%PDF-1.4 ...") is True
+    assert is_pdf(png_bytes(60, 60)) is False
+    assert is_pdf(b"") is False
+
+
+def test_render_pdf_pages_dims_and_png() -> None:
+    from app.images import render_pdf_pages
+
+    pages = render_pdf_pages(_pdf([(300, 400), (300, 400)]))
+    assert len(pages) == 2
+    assert (pages[0].width, pages[0].height) == (300, 400)
+    assert pages[0].png.startswith(b"\x89PNG")  # inference input is PNG
+    assert (pages[1].width, pages[1].height) == (300, 400)
+
+
+def test_render_pdf_page_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.images import render_pdf_pages
+
+    monkeypatch.setattr(config, "MAX_PDF_PAGES", 2)
+    with pytest.raises(ImageValidationError) as ei:
+        render_pdf_pages(_pdf([(60, 60)] * 3))
+    assert ei.value.code == "too_many_pages"
+
+
+def test_render_pdf_corrupt_rejected() -> None:
+    from app.images import render_pdf_pages
+
+    with pytest.raises(ImageValidationError) as ei:
+        render_pdf_pages(b"%PDF-1.4 not really a pdf")
+    assert ei.value.code == "undecodable"
+
+
+def test_render_pdf_too_small_page_rejected() -> None:
+    from app.images import render_pdf_pages
+
+    with pytest.raises(ImageValidationError) as ei:
+        render_pdf_pages(_pdf([(20, 30)]))
+    assert ei.value.code == "too_small"

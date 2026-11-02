@@ -96,3 +96,70 @@ def test_markdown_text_variants() -> None:
     assert markdown_text({"markdown": {"text": "# hi"}}) == "# hi"
     assert markdown_text({"markdown": "plain"}) == "plain"
     assert markdown_text({}) == ""
+
+
+def test_normalize_document_pages_order_and_ids() -> None:
+    from app.blocks import normalize_document
+
+    page0 = {"parsing_res_list": [
+        {"block_id": 0, "block_order": 0, "block_label": "text",
+         "block_bbox": [0, 0, 10, 10], "block_content": "a",
+         "global_block_id": 0, "global_group_id": 0},
+        {"block_id": 1, "block_order": None, "block_label": "table",
+         "block_bbox": [0, 20, 10, 30], "block_content": "<table></table>",
+         "global_block_id": 5, "global_group_id": 5},
+    ]}
+    page1 = {"parsing_res_list": [
+        {"block_id": 0, "block_order": 0, "block_label": "text",
+         "block_bbox": [0, 0, 10, 10], "block_content": "b",
+         "global_block_id": 9, "global_group_id": 9},
+    ]}
+    blocks = normalize_document([page0, page1])
+    assert [(b["id"], b["page"]) for b in blocks] == [(0, 0), (5, 0), (9, 1)]
+    assert blocks[1]["order"] == 5  # order falls back to global id when null
+
+
+def test_normalize_document_merges_cross_page_fragment_span() -> None:
+    from app.blocks import normalize_document
+
+    page0 = {"parsing_res_list": [
+        {"block_id": 0, "block_order": 0, "block_label": "table",
+         "block_bbox": [0, 0, 10, 10], "block_content": "<table><tr><td>full</td></tr></table>",
+         "global_block_id": 5, "global_group_id": 5},
+    ]}
+    page1 = {"parsing_res_list": [
+        # continuation fragment: emptied by the engine, group-linked to id 5
+        {"block_id": 0, "block_order": 0, "block_label": "table",
+         "block_bbox": [0, 0, 10, 10], "block_content": "",
+         "global_block_id": 7, "global_group_id": 5},
+    ]}
+    blocks = normalize_document([page0, page1])
+    assert len(blocks) == 1  # fragment not emitted
+    assert blocks[0]["page"] == 0 and blocks[0]["page_end"] == 1
+
+
+def test_document_markdown_joins_pages() -> None:
+    from app.blocks import document_markdown
+
+    md = document_markdown([{"markdown": {"text": "p1"}}, {"markdown": {"text": "p2"}}])
+    assert md == "p1\n\np2"
+
+
+def test_normalize_document_span_owner_carries_page_bboxes() -> None:
+    from app.blocks import normalize_document
+
+    page0 = {"parsing_res_list": [
+        {"block_id": 0, "block_order": 0, "block_label": "table",
+         "block_bbox": [1, 2, 3, 4], "block_content": "<table></table>",
+         "global_block_id": 5, "global_group_id": 5},
+    ]}
+    page1 = {"parsing_res_list": [
+        {"block_id": 0, "block_order": 0, "block_label": "table",
+         "block_bbox": [5, 6, 7, 8], "block_content": "",
+         "global_block_id": 7, "global_group_id": 5},
+    ]}
+    blocks = normalize_document([page0, page1])
+    assert blocks[0]["page_bboxes"] == [
+        {"page": 0, "bbox": [1, 2, 3, 4]},
+        {"page": 1, "bbox": [5, 6, 7, 8]},
+    ]

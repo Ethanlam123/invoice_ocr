@@ -3,23 +3,27 @@
 import { useEffect, useState } from "react";
 
 import type { Block } from "@/lib/types";
+import { pageLabel } from "@/lib/blocks";
 
 interface BlockListProps {
   blocks: Block[];
   selectedId: number | null;
   onSelect: (id: number) => void;
   onKey: (event: React.KeyboardEvent<HTMLDivElement>) => void;
+  showPages?: boolean;
 }
 
 function BlockItem({
   block,
   index,
   selected,
+  showPages,
   onSelect,
 }: {
   block: Block;
   index: number;
   selected: boolean;
+  showPages: boolean;
   onSelect: (id: number) => void;
 }) {
   const [showSource, setShowSource] = useState(false);
@@ -36,6 +40,7 @@ function BlockItem({
         <span className="block-meta">
           <span className="block-index">{String(index + 1).padStart(2, "0")}</span>
           <span className="block-label">{block.label}</span>
+          {showPages && <span className="block-page">{pageLabel(block)}</span>}
           <span className="block-id">#{block.id}</span>
           {block.content_html && (
             <span
@@ -69,7 +74,7 @@ function BlockItem({
   );
 }
 
-export default function BlockList({ blocks, selectedId, onSelect, onKey }: BlockListProps) {
+export default function BlockList({ blocks, selectedId, onSelect, onKey, showPages = false }: BlockListProps) {
   useEffect(() => {
     if (selectedId == null) return;
     document.getElementById(`block-opt-${selectedId}`)?.scrollIntoView({
@@ -97,6 +102,7 @@ export default function BlockList({ blocks, selectedId, onSelect, onKey }: Block
               block={b}
               index={i}
               selected={b.id === selectedId}
+              showPages={showPages}
               onSelect={onSelect}
             />
           ))}

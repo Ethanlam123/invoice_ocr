@@ -1,9 +1,11 @@
 # Invoice OCR Viewer
 
-Local-first invoice/receipt OCR demo for Apple Silicon Macs. Upload an image, run the
-full PaddleOCR-VL pipeline (layout analysis on CPU + recognition via MLX on GPU),
-inspect recognized blocks with bidirectional selection between the document image and
-the reading-order list, and download the raw inference JSON.
+Local-first invoice/receipt OCR demo for Apple Silicon Macs. Upload an image or a
+PDF (up to 8 pages), run the full PaddleOCR-VL pipeline (layout analysis on CPU +
+recognition via MLX on GPU), inspect recognized blocks with bidirectional selection
+between the document image and the reading-order list, and download the raw
+inference JSON. Tables that continue onto the next PDF page are merged into one
+block spanning both pages.
 
 All inference runs locally. No cloud APIs, no auth, no database.
 
@@ -22,7 +24,7 @@ if any of their ports is already taken).
 flowchart TB
     UI["Browser · :3000<br/>Next.js viewer"]
     S1["1 · Upload<br/>capped stream"]
-    S2["2 · Normalize<br/>EXIF to PNG"]
+    S2["2 · Normalize<br/>image/PDF to PNG"]
     S3["3 · Infer<br/>PaddleOCR-VL · CPU<br/>one at a time"]
     S4["4 · Shape<br/>blocks, safe tables"]
     VLM["MLX-VLM server · :8111<br/>PaddleOCR-VL 1.6 · 4-bit<br/>recognition only"]
@@ -52,13 +54,20 @@ Stage detail (numbers match the diagram):
 1. `read_upload_capped` - streams the body in 1 MB chunks with a running 10 MB
    cap, so oversize uploads fail with 413 before being buffered.
 2. `load_normalized` - decodes by content (JPEG/PNG only, min 50 px side,
-   max 30 MP), EXIF-transposes, converts to RGB, re-encodes as PNG.
+   max 30 MP), EXIF-transposes, converts to RGB, re-encodes as PNG. PDF
+   uploads (`render_pdf_pages`) are instead rendered page by page at 150 DPI
+   with pypdfium2 (max 8 pages); each page then follows the same path.
 3. `RealPipeline` - probes the MLX server (`/v1/models`, 503 if down), then
    runs PaddleOCRVL (PP-DocLayoutV3 layout on CPU, recognition delegated to the
    MLX server): lazy init, reused across requests; an asyncio.Lock allows one
-   inference at a time; temp files deleted in finally.
-4. `normalize_blocks` - numpy arrays to lists, order falls back to `block_id`,
-   blocks sorted; table HTML sanitized (nh3); `input_path` stripped.
+   inference at a time; temp files deleted in finally. Multi-page documents
+   run once per page, then `restructure_pages(merge_tables=True)` merges
+   tables that continue on the next page (engine feature, MinerU-derived).
+4. `normalize_blocks` / `normalize_document` - numpy arrays to lists, order
+   falls back to `block_id`, blocks sorted; table HTML sanitized (nh3);
+   `input_path` stripped. Multi-page: each block carries its `page`; a merged
+   table keeps one list entry with `page_end` and per-page `page_bboxes`
+   (the emptied continuation fragment is not emitted).
 
 The MLX-VLM server handles recognition only. The full pipeline (layout, reading
 order, table structuring) runs in the backend via `PaddleOCRVL`, which calls the
@@ -67,10 +76,11 @@ server with `vl_rec_backend="mlx-vlm-server"`.
 ### Coordinate guarantee
 
 `block_bbox` values are pixels of the exact PNG that inference ran on: the
-backend EXIF-normalizes and re-encodes first, gives those bytes to the pipeline,
-and returns the same bytes as `image.data_url`. The frontend draws one SVG with
-`viewBox="0 0 width height"` absolutely positioned over that `<img>`, so boxes
-stay aligned at any rendered size - no pixel math, no resize handling.
+backend EXIF-normalizes and re-encodes first (or renders the PDF page itself),
+gives those bytes to the pipeline, and returns the same bytes as that page's
+`data_url`. The frontend draws one SVG with `viewBox="0 0 width height"`
+absolutely positioned over each page's `<img>`, so boxes stay aligned at any
+rendered size - no pixel math, no resize handling.
 
 ### Response contract
 
@@ -79,30 +89,36 @@ Every endpoint returns one envelope. `POST /api/ocr` on success:
 ```json
 { "success": true,
   "data": {
-    "image":   { "width": 1240, "height": 1600, "mime": "image/png", "data_url": "..." },
+    "pages":   [ { "index": 0, "width": 1240, "height": 1600, "mime": "image/png", "data_url": "..." } ],
     "blocks":  [ { "id": 0, "order": 0, "label": "table",
                    "bbox": [78, 498, 1171, 916],
                    "content": "<table>...</table>",
-                   "content_html": "<table>...</table>" } ],
+                   "content_html": "<table>...</table>",
+                   "page": 0, "page_end": 0, "page_bboxes": null } ],
     "markdown": "...",
     "raw":     { "parsing_res_list": [...], "layout_det_res": [...] } },
   "error": null,
-  "meta": { "elapsed_ms": 20601, "model": "mlx-community/PaddleOCR-VL-1.6-4bit", "mode": "real" } }
+  "meta": { "elapsed_ms": 20601, "model": "mlx-community/PaddleOCR-VL-1.6-4bit",
+            "mode": "real", "page_count": 1 } }
 ```
 
-- `id` is the pipeline `block_id` - the stable key for left/right selection sync
+- `id` is the pipeline `block_id` (multi-page: the engine's global id, unique
+  across pages) - the stable key for left/right selection sync
   (never text matching; documents can repeat text).
 - `order` falls back to `block_id` when `block_order` is null (header/table/footer).
+- `page` / `page_end` locate the block; `page_end > page` marks a table merged
+  across pages, with `page_bboxes` holding one bbox per page (owner first).
 - `content_html` exists only for table blocks, after server-side nh3 sanitization.
   All other block text is rendered as React text nodes (escaped).
-- `raw` is the untouched pipeline result minus `input_path` (temp-file path).
+- `raw` is the untouched pipeline result minus `input_path` (temp-file path);
+  multi-page documents return `{ "page_count": N, "pages": [per-page results] }`.
   Download JSON in the UI writes exactly this object.
 
 Error envelope: `{ "success": false, "data": null, "error": { "code", "message" } }`.
 
 | HTTP | code | when |
 | ---- | ---- | ---- |
-| 400 | `undecodable` / `unsupported_format` / `too_small` / `too_many_pixels` | upload fails validation |
+| 400 | `undecodable` / `unsupported_format` / `too_small` / `too_many_pixels` / `too_many_pages` | upload fails validation |
 | 413 | `file_too_large` | over 10 MB, caught while streaming |
 | 422 | `invalid_request` | missing `file` multipart field |
 | 503 | `vlm_server_unreachable` / `pipeline_unavailable` / `pipeline_init_failed` | model side not runnable |
@@ -130,8 +146,8 @@ vlm-server/  uv project holding only mlx-vlm (isolated from paddle deps)
 frontend/    Next.js app: app/page.tsx (state machine),
              components/ocr-viewer/ (UploadPanel, ImagePane+SVG overlay,
              BlockList, StatusBar, ErrorBanner), lib/ (api, types, blocks)
-scripts/     dev.sh, make_sample_invoice.py, run_real_inference.py,
-             eval_dataset.py
+scripts/     dev.sh, make_sample_invoice.py, make_multi_page_invoice.py,
+             run_real_inference.py, eval_dataset.py
 e2e/         Playwright specs against a mocked /api/ocr
 docs/        VALIDATION.md (real-inference log), eval_summary.json (booleans)
 samples/     our own PIL-generated test invoice (committable)
@@ -186,13 +202,17 @@ deterministic fake blocks and needs neither the MLX server nor the layout model:
 
 ## Usage
 
-1. Drop or choose a JPG/PNG (max 10 MB, 30 MP, min 50 px side).
-2. Press Run OCR. Real inference takes roughly 15-20 s per page on an M2.
-3. Left: document with region boxes. Right: blocks in reading order.
-   Click either side to select; arrows or j / k step through blocks; Esc clears.
-   Table blocks render as sanitized HTML with a source toggle.
+1. Drop or choose a JPG/PNG (max 10 MB, 30 MP, min 50 px side) or a PDF
+   (max 10 MB, up to 8 pages, rendered at 150 DPI).
+2. Press Run OCR. Real inference takes roughly 15-20 s per page on an M2;
+   multi-page documents run once per page, so a 5-page PDF takes ~1.5-2 min.
+3. Left: document pages with region boxes. Right: blocks in reading order,
+   tagged p.1, p.2, ... (a table merged across pages shows p.1-2 and its
+   continuation page draws a dashed box). Click either side to select;
+   arrows or j / k step through blocks; Esc clears. Table blocks render as
+   sanitized HTML with a source toggle.
 4. Download JSON returns the raw pipeline result (`parsing_res_list`,
-   `layout_det_res`, dimensions).
+   `layout_det_res`, dimensions; multi-page wrapped in `pages`).
 
 ## Tests
 
@@ -226,7 +246,11 @@ stored annotations are used only as a labeled reference (`ast.literal_eval`, nev
 - Layout blocks only; no per-word boxes, no business-field extraction.
 - `block_order` is null for some layout classes (header/table/footer); the viewer
   falls back to pipeline order for those.
-- Single image per run; no PDF/multi-page/batch.
+- One document per run; PDFs are capped at 8 pages (inference is ~15-20 s per
+  page; larger PDFs must be split first).
+- Cross-page table merging is heuristic (widths within 10%, neighbor-block
+  classes, matching columns): conservative - a continued table whose next page
+  starts with unrelated text above it will not merge.
 - English/Latin documents tested; CJK not exercised end-to-end yet.
 - The processing state shows elapsed time only - no progress percentage exists.
 - First inference after boot pays one-time model init (~20 s).

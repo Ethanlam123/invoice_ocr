@@ -1,3 +1,8 @@
+export interface PageBBox {
+  page: number;
+  bbox: number[];
+}
+
 export interface Block {
   id: number;
   order: number;
@@ -5,9 +10,13 @@ export interface Block {
   bbox: number[];
   content: string;
   content_html: string | null;
+  page: number;
+  page_end: number; // > page when the block spans pages (merged cross-page table)
+  page_bboxes?: PageBBox[] | null; // one bbox per page on spanning blocks
 }
 
-export interface ImageInfo {
+export interface PageInfo {
+  index: number;
   width: number;
   height: number;
   mime: string;
@@ -15,7 +24,7 @@ export interface ImageInfo {
 }
 
 export interface OcrData {
-  image: ImageInfo;
+  pages: PageInfo[];
   blocks: Block[];
   markdown: string;
   raw: Record<string, unknown>;
@@ -34,5 +43,6 @@ export interface Envelope {
     elapsed_ms: number;
     model: string;
     mode: string;
+    page_count?: number;
   } | null;
 }

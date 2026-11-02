@@ -14,9 +14,14 @@ class BlockOut(BaseModel):
     bbox: list[float]
     content: str
     content_html: str | None = None
+    page: int = 0
+    page_end: int = 0  # > page when the block spans pages (merged table)
+    # present only on spanning blocks: one bbox per page (owner first)
+    page_bboxes: list[dict[str, Any]] | None = None
 
 
-class ImageOut(BaseModel):
+class PageOut(BaseModel):
+    index: int
     width: int
     height: int
     mime: str
@@ -24,7 +29,7 @@ class ImageOut(BaseModel):
 
 
 class OcrData(BaseModel):
-    image: ImageOut
+    pages: list[PageOut]
     blocks: list[BlockOut]
     markdown: str
     raw: dict[str, Any]

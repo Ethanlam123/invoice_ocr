@@ -19,18 +19,64 @@ def _post(client: TestClient, content: bytes, filename: str = "a.png", mime: str
     return client.post("/api/ocr", files={"file": (filename, content, mime)})
 
 
+def _pdf_bytes(pages: list[tuple[int, int]]) -> bytes:
+    """Small multi-page PDF from PIL images (page renders back to pixel size)."""
+    imgs = [Image.new("RGB", size, "white") for size in pages]
+    buf = io.BytesIO()
+    imgs[0].save(buf, save_all=True, append_images=imgs[1:], format="PDF", resolution=150)
+    return buf.getvalue()
+
+
 def test_ocr_success_envelope(client: TestClient) -> None:
     r = _post(client, png_bytes(200, 150))
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is True and body["error"] is None
     data = body["data"]
-    assert data["image"]["width"] == 200 and data["image"]["height"] == 150
-    assert data["image"]["data_url"].startswith("data:image/png;base64,")
+    assert len(data["pages"]) == 1
+    assert data["pages"][0]["width"] == 200 and data["pages"][0]["height"] == 150
+    assert data["pages"][0]["data_url"].startswith("data:image/png;base64,")
     assert [b["id"] for b in data["blocks"]] == [0, 1, 2]
     assert data["blocks"][1]["content_html"].startswith("<table")
-    assert body["meta"]["mode"] == "stub"
+    assert all(b["page"] == 0 for b in data["blocks"])
+    assert body["meta"]["mode"] == "stub" and body["meta"]["page_count"] == 1
     assert isinstance(data["raw"], dict)  # raw pipeline JSON for download
+
+
+def test_pdf_two_pages_envelope_and_merge_span(client: TestClient) -> None:
+    r = _post(client, _pdf_bytes([(300, 400), (300, 400)]), filename="a.pdf",
+              mime="application/pdf")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert len(data["pages"]) == 2
+    for i, p in enumerate(data["pages"]):
+        assert p["index"] == i and p["width"] == 300 and p["height"] == 400
+        assert p["data_url"].startswith("data:image/png;base64,")
+    assert r.json()["meta"]["page_count"] == 2
+    # stub mirrors the engine merge: page-0 table owns the HTML, page-1
+    # fragment is group-linked and must not be emitted as its own block
+    blocks = {b["id"]: b for b in data["blocks"]}
+    assert blocks[1]["page"] == 0 and blocks[1]["page_end"] == 1
+    assert [pb["page"] for pb in blocks[1]["page_bboxes"]] == [0, 1]
+    assert blocks[1]["content_html"].startswith("<table")
+    assert blocks[10 + 1]["page"] == 1  # trailing text block on page 2
+    assert all(b["content"] != "" for b in data["blocks"])
+    assert "input_path" not in str(data["raw"])
+
+
+def test_pdf_rejects_too_many_pages(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import config
+
+    monkeypatch.setattr(config, "MAX_PDF_PAGES", 2)
+    r = _post(client, _pdf_bytes([(100, 100)] * 3), filename="a.pdf", mime="application/pdf")
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "too_many_pages"
+
+
+def test_pdf_rejects_corrupt_pdf(client: TestClient) -> None:
+    r = _post(client, b"%PDF-1.4 garbage", filename="a.pdf", mime="application/pdf")
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "undecodable"
 
 
 def test_ocr_rejects_undecodable(client: TestClient) -> None:

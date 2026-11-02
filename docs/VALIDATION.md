@@ -114,3 +114,50 @@ A full repo audit found 8 issues (0 must-fix); all fixed:
 - img width/height set from known dimensions (preview and result) to stop
   layout jumps; downloadJson defers revokeObjectURL for Safari
 - dev.sh refuses to start when any of its ports is busy
+
+## Multi-page PDF support (2026-11-02)
+
+Design (verified against installed paddlex 3.7.2 source before building): PDF
+uploads are rendered page by page with pypdfium2 (already a paddleocr dep, no
+new packages) at 150 DPI; each page PNG goes through the exact single-image
+path, so block_bbox keeps referring to pixels we also return as page images.
+Cross-page merging uses the engine's own `restructure_pages(merge_tables=True)`
+(MinerU-derived `merge_tables_across_pages`): the owner table keeps the full
+HTML, the continuation fragment is emptied and group-linked; the backend reads
+that linkage from JSON (`global_group_id != global_block_id`) and extends the
+owner's `page_end`, adds `page_bboxes` (one bbox per page), and drops the
+fragment from the list.
+
+Merge conditions (from `merge_table.py`): both tables' widths within 10%,
+prev-page table followed only by footer-class blocks, next-page table preceded
+only by header/number-class blocks (or "continued" text), and matching column
+counts. Conservative by design.
+
+- `samples/multi_page_invoice.pdf` (ours, 2 pages, table straddling the break,
+  built to satisfy the conditions): live API run 16.6 s cold / 11-17 s warm,
+  8 blocks, table block spans p.1-2, merged HTML = 13 rows (header + 8 + 4
+  rows from the two pages), fragment not emitted, both pages' bboxes present.
+- Browser session (Chrome via DevTools): pages stacked with captions, page
+  count chip, block tags p.1 / p.1-2 / p.2, selecting the span table
+  highlights a solid rect on page 1 AND a dashed continuation rect on page 2
+  (SVG `fill:none` needs `pointer-events: all` to stay clickable - found by an
+  e2e hang, fixed).
+- drew-pp/invoice-extraction-benchmark (CC-BY-4.0, fetched, never committed):
+  clean-gb-serif / clean-us-clean-simple / clean-nl-two-column all 1 page,
+  7-8 blocks, ~8.5 s each; gb-serif fields verified by eye (TAX INVOICE,
+  IN0049923, dated items table with Qty / Unit Price / Amount).
+- hwyin04/table-cross-page (no license - eval only): first 3 pages of a
+  33-page wiki article: 50 blocks in 47.6 s; NO cross-page merge triggered
+  (wiki layout violates the prev/next-neighbor conditions). Recorded as the
+  honest counter-example: the heuristic is conservative; no false merges
+  observed either.
+- Limits: max 8 PDF pages (`too_many_pages`, 400) - 8 x ~20 s stays under the
+  5 min client timeout; rendered pages obey the same min-side / max-pixel caps.
+
+Automated suites after the change: 36 pytest (24 existing + 12 new: PDF magic,
+render dims, page cap, corrupt PDF, multi-page normalize, span page_bboxes,
+markdown join, PDF envelope, too_many_pages API), 8 vitest (pageLabel added),
+5 e2e (multi-page rendering/span/selection added). Also fixed a pre-existing
+issue: vitest had been collecting e2e/*.spec.ts and failing the file on every
+`npm test` run (visible at the previous HEAD); `frontend/vitest.config.ts` now
+scopes vitest to src/.

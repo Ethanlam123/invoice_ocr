@@ -52,6 +52,55 @@ async def read_upload_capped(file: AsyncReader) -> bytes:
     return b"".join(chunks)
 
 
+def is_pdf(data: bytes) -> bool:
+    """PDF uploads are detected by magic bytes, like image format detection."""
+    return data.startswith(config.PDF_MAGIC)
+
+
+def render_pdf_pages(data: bytes) -> list[NormalizedImage]:
+    """Render PDF bytes to per-page PNGs (no EXIF step: PDF pages have none).
+
+    The rendered pages are both the pipeline input and the viewer images, so
+    block_bbox coordinates keep the same guarantee as image uploads.
+    """
+    import pypdfium2 as pdfium
+
+    try:
+        doc = pdfium.PdfDocument(data)
+        page_count = len(doc)
+        if page_count == 0:
+            raise ImageValidationError("undecodable", "PDF has no pages.")
+        if page_count > config.MAX_PDF_PAGES:
+            raise ImageValidationError(
+                "too_many_pages",
+                f"PDF has {page_count} pages; limit is {config.MAX_PDF_PAGES}.",
+            )
+        pages: list[NormalizedImage] = []
+        for page in doc:
+            img = page.render(scale=config.PDF_RENDER_DPI / 72).to_pil().convert("RGB")
+            width, height = img.size
+            if min(width, height) < config.MIN_SIDE:
+                raise ImageValidationError(
+                    "too_small",
+                    f"PDF page renders to {width}x{height}px at {config.PDF_RENDER_DPI} DPI; "
+                    f"minimum side is {config.MIN_SIDE}px.",
+                )
+            if width * height > config.MAX_PIXELS:
+                raise ImageValidationError(
+                    "too_many_pixels",
+                    f"PDF page renders to {width * height:,} pixels at "
+                    f"{config.PDF_RENDER_DPI} DPI; limit is {config.MAX_PIXELS:,}.",
+                )
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            pages.append(NormalizedImage(png=buf.getvalue(), width=width, height=height))
+        return pages
+    except ImageValidationError:
+        raise
+    except Exception as exc:
+        raise ImageValidationError("undecodable", f"PDF cannot be rendered: {exc}") from exc
+
+
 def load_normalized(data: bytes) -> NormalizedImage:
     """Validate raw upload bytes and return an EXIF-normalized PNG.
 

@@ -47,9 +47,16 @@ export default function Home() {
     setSelectedId(null);
     setPhase("ready");
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    setPreviewDims(null);
+    const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+    if (isPdf) {
+      // a PDF cannot render in <img>; its pages appear after OCR runs
+      objectUrlRef.current = null;
+      setPreviewUrl(null);
+      return;
+    }
     const url = URL.createObjectURL(f);
     objectUrlRef.current = url;
-    setPreviewDims(null);
     // read the preview's intrinsic size so the img can reserve space (no layout jump)
     const el = new Image();
     el.onload = () => setPreviewDims({ width: el.naturalWidth, height: el.naturalHeight });
@@ -74,7 +81,6 @@ export default function Home() {
     if (env.success && env.data) {
       setResult(env.data);
       setMeta(env.meta);
-      setPreviewUrl(env.data.image.data_url); // normalized image: boxes match these pixels
       setPhase("done");
     } else {
       setResult(null);
@@ -139,14 +145,15 @@ export default function Home() {
             elapsedMs={meta?.elapsed_ms ?? null}
             liveElapsedMs={liveElapsed}
             blockCount={blocks.length}
+            pageCount={meta?.page_count ?? null}
             model={meta?.model ?? null}
             onDownload={() => result && downloadJson(result.raw, resultFilename())}
             onReset={handleReset}
           />
           <ImagePane
-            imageUrl={previewUrl}
-            imageWidth={result?.image.width ?? previewDims?.width ?? null}
-            imageHeight={result?.image.height ?? previewDims?.height ?? null}
+            pages={result?.pages ?? []}
+            previewUrl={previewUrl}
+            previewDims={previewDims}
             blocks={blocks}
             selectedId={selectedId}
             onSelect={setSelectedId}
@@ -170,6 +177,7 @@ export default function Home() {
               selectedId={selectedId}
               onSelect={setSelectedId}
               onKey={handleListKey}
+              showPages={(result?.pages.length ?? 0) > 1}
             />
           )}
         </aside>

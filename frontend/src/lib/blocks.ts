@@ -18,6 +18,13 @@ export function toRect(bbox: number[]): Rect {
   };
 }
 
+/** Human label for a block's page span: "p.2" or "p.1-2" (merged cross-page table). */
+export function pageLabel(block: Pick<Block, "page" | "page_end">): string {
+  return block.page_end > block.page
+    ? `p.${block.page + 1}-${block.page_end + 1}`
+    : `p.${block.page + 1}`;
+}
+
 /** Id of the block `delta` positions from `currentId` in reading order (null if none). */
 export function stepBlockId(blocks: Block[], currentId: number | null, delta: 1 | -1): number | null {
   if (blocks.length === 0) return null;

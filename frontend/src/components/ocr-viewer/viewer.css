@@ -464,3 +464,37 @@
     justify-content: space-between;
   }
 }
+
+/* ---- Multi-page results ---- */
+
+.page-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+  min-width: min-content;
+}
+
+.page-caption {
+  margin-top: 0.55rem;
+  text-align: center;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.block-page {
+  font-weight: 600;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+/* continuation of a cross-page block on its later pages: dashed outline.
+   pointer-events: all keeps the whole rect clickable even with fill: none
+   (SVG default hit-testing only counts painted areas). */
+.overlay-rect-continuation {
+  fill: none;
+  stroke-dasharray: 6 4;
+  pointer-events: all;
+}

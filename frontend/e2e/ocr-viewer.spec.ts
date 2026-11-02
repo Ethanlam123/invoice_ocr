@@ -24,7 +24,9 @@ function envelope() {
   return {
     success: true,
     data: {
-      image: { width: FIXTURE_W, height: FIXTURE_H, mime: "image/png", data_url: DATA_URL },
+      pages: [
+        { index: 0, width: FIXTURE_W, height: FIXTURE_H, mime: "image/png", data_url: DATA_URL },
+      ],
       blocks: [
         {
           id: 0,
@@ -33,6 +35,8 @@ function envelope() {
           bbox: [bx(10), by(10), bx(100), by(40)],
           content: "ACME Corp",
           content_html: null,
+          page: 0,
+          page_end: 0,
         },
         {
           id: 1,
@@ -41,6 +45,8 @@ function envelope() {
           bbox: [bx(10), by(60), bx(100), by(90)],
           content: "Hong Kong", // duplicate text on purpose
           content_html: null,
+          page: 0,
+          page_end: 0,
         },
         {
           id: 2,
@@ -49,6 +55,8 @@ function envelope() {
           bbox: [bx(110), by(60), bx(190), by(90)],
           content: "Hong Kong",
           content_html: null,
+          page: 0,
+          page_end: 0,
         },
         {
           id: 3,
@@ -57,6 +65,8 @@ function envelope() {
           bbox: [bx(10), by(100), bx(190), by(140)],
           content: "<table><tr><td>a</td><td>b</td></tr></table>",
           content_html: "<table><tr><td>a</td><td>b</td></tr></table>",
+          page: 0,
+          page_end: 0,
         },
         {
           id: 4,
@@ -65,13 +75,64 @@ function envelope() {
           bbox: [bx(10), by(145), bx(190), by(149)],
           content: 'evil <script>alert(1)</script> & "quotes"',
           content_html: null,
+          page: 0,
+          page_end: 0,
         },
       ],
       markdown: "",
       raw: { parsing_res_list: [], marker: "mock-raw" },
     },
     error: null,
-    meta: { elapsed_ms: 1234, model: "stub", mode: "e2e-mock" },
+    meta: { elapsed_ms: 1234, model: "stub", mode: "e2e-mock", page_count: 1 },
+  };
+}
+
+function multiPageEnvelope() {
+  // two pages sharing the fixture image; table block spans both pages
+  const e = envelope();
+  return {
+    ...e,
+    data: {
+      ...e.data,
+      pages: [e.data.pages[0], { ...e.data.pages[0], index: 1 }],
+      blocks: [
+        {
+          id: 0,
+          order: 0,
+          label: "text",
+          bbox: [10, 10, 100, 40],
+          content: "ACME Corp",
+          content_html: null,
+          page: 0,
+          page_end: 0,
+        },
+        {
+          id: 1,
+          order: 1,
+          label: "table",
+          bbox: [10, 60, 190, 140],
+          content: "<table><tr><td>a</td><td>b</td></tr></table>",
+          content_html: "<table><tr><td>a</td><td>b</td></tr></table>",
+          page: 0,
+          page_end: 1, // merged cross-page table
+          page_bboxes: [
+            { page: 0, bbox: [10, 60, 190, 140] },
+            { page: 1, bbox: [10, 10, 190, 90] },
+          ],
+        },
+        {
+          id: 2,
+          order: 2,
+          label: "text",
+          bbox: [10, 10, 100, 40],
+          content: "Total: 99.00",
+          content_html: null,
+          page: 1,
+          page_end: 1,
+        },
+      ],
+    },
+    meta: { ...e.meta, page_count: 2 },
   };
 }
 
@@ -212,4 +273,48 @@ test("upload stays locked during processing; a file change cannot race the run",
   release?.();
   await expect(page.getByText("5 blocks in")).toBeVisible();
   await expect(page.locator(".block-item")).toHaveCount(5);
+});
+
+test("multi-page PDF result: pages stack, span table tags p.1-2, selection crosses pages", async ({
+  page,
+}) => {
+  await runOcrWith(page, multiPageEnvelope());
+
+  // both pages render, stacked, with captions
+  await expect(page.locator(".image-frame")).toHaveCount(2);
+  await expect(page.getByText("Page 1 / 2")).toBeVisible();
+  await expect(page.getByText("Page 2 / 2")).toBeVisible();
+
+  // page count chip in the status bar; span tag in the block list
+  await expect(page.getByText("3 blocks in")).toBeVisible();
+  await expect(page.getByText("2 pages")).toBeVisible();
+  await expect(page.locator(".block-page", { hasText: "p.1-2" })).toBeVisible();
+
+  // rects land on their pages: p1 has 2, p2 has text + the table continuation
+  const frames = page.locator(".image-frame");
+  await expect(frames.nth(0).locator(".overlay-rect")).toHaveCount(2);
+  await expect(frames.nth(1).locator(".overlay-rect")).toHaveCount(2);
+  await expect(frames.nth(1).locator(".overlay-rect-continuation")).toHaveCount(1);
+
+  // the continuation rect on page 2 also selects the span table block
+  await frames
+    .nth(1)
+    .locator('.overlay-rect[aria-label="Region 1: table (spans pages)"]')
+    .click();
+  await expect(page.locator("#block-opt-1 .block-button")).toHaveClass(
+    /block-button-selected/,
+  );
+  await expect(frames.nth(0).locator(".overlay-rect-selected")).toHaveCount(1);
+
+  // selecting a page-2 block from the list highlights its rect on page 2 only
+  await page.locator("#block-opt-2 .block-button").click();
+  await expect(
+    frames.nth(1).locator('.overlay-rect[aria-label="Region 2: text"]'),
+  ).toHaveClass(/overlay-rect-selected/);
+  expect(
+    await frames.nth(0).locator(".overlay-rect-selected").count(),
+  ).toBe(0);
+
+  // the span table renders its sanitized HTML and lives in the list once
+  await expect(page.locator(".block-table td")).toHaveCount(2);
 });

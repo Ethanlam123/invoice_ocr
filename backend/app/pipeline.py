@@ -29,8 +29,10 @@ class OcrBackend(ABC):
     mode: str = "real"
 
     @abstractmethod
-    async def run(self, png: bytes) -> dict[str, Any]:
-        """Run inference on normalized PNG bytes; return pipeline result JSON."""
+    async def run(self, pngs: list[bytes]) -> dict[str, Any]:
+        """Run inference on normalized PNG bytes (one per page); return
+        pipeline result JSON: single-page v1 dict, or
+        {"page_count": N, "pages": [per-page dicts]} for multi-page."""
 
 
 class RealPipeline(OcrBackend):
@@ -44,9 +46,9 @@ class RealPipeline(OcrBackend):
         self._pipeline: Any = None
         self._lock = asyncio.Lock()
 
-    async def run(self, png: bytes) -> dict[str, Any]:
+    async def run(self, pngs: list[bytes]) -> dict[str, Any]:
         async with self._lock:
-            return await asyncio.to_thread(self._run_sync, png)
+            return await asyncio.to_thread(self._run_sync, pngs)
 
     def _check_vlm_server(self) -> None:
         url = config.VLM_SERVER_URL.rstrip("/") + "/v1/models"
@@ -84,29 +86,78 @@ class RealPipeline(OcrBackend):
                 ) from exc
         return self._pipeline
 
-    def _run_sync(self, png: bytes) -> dict[str, Any]:
+    def _run_sync(self, pngs: list[bytes]) -> dict[str, Any]:
         self._ensure_pipeline()
         self._check_vlm_server()
+        if len(pngs) == 1:
+            return self._run_one(pngs[0])
+        return self._run_many(pngs)
+
+    def _predict_png(self, png: bytes) -> tuple[Any, Path]:
+        """Write PNG bytes to a temp file, run one page of inference.
+
+        Returns (result, temp_path); caller owns deleting the temp file."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
             tf.write(png)
             img_path = Path(tf.name)
         try:
-            try:
-                result = next(iter(self._pipeline.predict(str(img_path))))
-            except InferenceError:
-                raise
-            except Exception as exc:
-                raise InferenceError("inference_failed", f"OCR inference failed: {exc}") from exc
-            # save_to_json converts numpy arrays to lists; round-trip for clean dicts
-            with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
-                json_path = Path(tf.name)
-            try:
-                result.save_to_json(str(json_path))
-                return json.loads(json_path.read_text())
-            finally:
-                json_path.unlink(missing_ok=True)
+            return next(iter(self._pipeline.predict(str(img_path)))), img_path
+        except InferenceError:
+            img_path.unlink(missing_ok=True)
+            raise
+        except Exception as exc:
+            img_path.unlink(missing_ok=True)
+            raise InferenceError("inference_failed", f"OCR inference failed: {exc}") from exc
+
+    def _run_one(self, png: bytes) -> dict[str, Any]:
+        """Single page: the original v1 path, unchanged shape."""
+        result, img_path = self._predict_png(png)
+        try:
+            return self._result_json(result)
         finally:
             img_path.unlink(missing_ok=True)
+
+    def _run_many(self, pngs: list[bytes]) -> dict[str, Any]:
+        """Multi-page: per-page predict, then the engine's cross-page merge.
+
+        restructure_pages(concatenate_pages=False) returns one result per page;
+        merged tables keep full HTML on the owner page while continuation
+        fragments get content "" and global_group_id = owner's global_block_id
+        (parsed back in app.blocks.normalize_document).
+        """
+        results = []
+        img_paths: list[Path] = []
+        try:
+            for png in pngs:
+                result, img_path = self._predict_png(png)
+                results.append(result)
+                img_paths.append(img_path)
+            try:
+                pages = list(
+                    self._pipeline.restructure_pages(
+                        results, merge_tables=True, relevel_titles=False,
+                        concatenate_pages=False,
+                    )
+                )
+            except Exception as exc:
+                raise InferenceError(
+                    "inference_failed", f"Cross-page restructuring failed: {exc}"
+                ) from exc
+            page_jsons = [self._result_json(r) for r in pages]
+            return {"page_count": len(page_jsons), "pages": page_jsons}
+        finally:
+            for p in img_paths:
+                p.unlink(missing_ok=True)
+
+    def _result_json(self, result: Any) -> dict[str, Any]:
+        # save_to_json converts numpy arrays to lists; round-trip for clean dicts
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+            json_path = Path(tf.name)
+        try:
+            result.save_to_json(str(json_path))
+            return json.loads(json_path.read_text())
+        finally:
+            json_path.unlink(missing_ok=True)
 
 
 class StubPipeline(OcrBackend):
@@ -114,12 +165,28 @@ class StubPipeline(OcrBackend):
 
     mode = "stub"
 
-    async def run(self, png: bytes) -> dict[str, Any]:
+    async def run(self, pngs: list[bytes]) -> dict[str, Any]:
+        if len(pngs) == 1:
+            return self._page(pngs[0], 0, single=True)
+        # multi-page fake mirrors the engine's merge contract: page 0 owns the
+        # merged table HTML, page 1's fragment is emptied and group-linked
+        pages = [self._page(pngs[0], 0, single=False), self._fragment_page(pngs[1])]
+        return {"page_count": len(pages), "pages": pages}
+
+    def _page(self, png: bytes, gid_base: int, single: bool) -> dict[str, Any]:
         from PIL import Image
 
         with Image.open(io.BytesIO(png)) as im:
             w, h = im.size
-        return {
+
+        def g(n: int) -> dict[str, int]:
+            # global ids are only present in multi-page results (engine adds
+            # them during restructure_pages)
+            if single:
+                return {}
+            return {"global_block_id": gid_base + n, "global_group_id": gid_base + n}
+
+        result = {
             "input_path": "/tmp/stub-should-be-stripped.png",
             "parsing_res_list": [
                 {
@@ -128,6 +195,7 @@ class StubPipeline(OcrBackend):
                     "block_label": "title",
                     "block_bbox": [w * 0.08, h * 0.04, w * 0.45, h * 0.09],
                     "block_content": "INVOICE",
+                    **g(0),
                 },
                 {
                     "block_id": 1,
@@ -138,6 +206,7 @@ class StubPipeline(OcrBackend):
                         "<table><tr><th>Item</th><th>Qty</th></tr>"
                         "<tr><td>Service</td><td>2</td></tr></table>"
                     ),
+                    **g(1),
                 },
                 {
                     "block_id": 2,
@@ -145,9 +214,43 @@ class StubPipeline(OcrBackend):
                     "block_label": "text",
                     "block_bbox": [w * 0.08, h * 0.90, w * 0.60, h * 0.95],
                     "block_content": "Thank you for your business.",
+                    **g(2),
                 },
             ],
             "markdown": {"text": "# INVOICE\n\n<table><tr><th>Item</th></tr></table>"},
+        }
+        return result
+
+    def _fragment_page(self, png: bytes) -> dict[str, Any]:
+        """Page 2: table continuation fragment (group-linked to page 1's table)
+        plus one normal trailing block."""
+        from PIL import Image
+
+        with Image.open(io.BytesIO(png)) as im:
+            w, h = im.size
+        return {
+            "input_path": "/tmp/stub-should-be-stripped-p2.png",
+            "parsing_res_list": [
+                {
+                    "block_id": 0,
+                    "block_order": 0,
+                    "block_label": "table",
+                    "block_bbox": [w * 0.08, h * 0.05, w * 0.92, h * 0.35],
+                    "block_content": "",  # emptied by the engine's merge
+                    "global_block_id": 10,
+                    "global_group_id": 1,  # owner = page 1's table (global id 1)
+                },
+                {
+                    "block_id": 1,
+                    "block_order": 1,
+                    "block_label": "text",
+                    "block_bbox": [w * 0.08, h * 0.80, w * 0.60, h * 0.85],
+                    "block_content": "Total: 99.00",
+                    "global_block_id": 11,
+                    "global_group_id": 11,
+                },
+            ],
+            "markdown": {"text": "Total: 99.00"},
         }
 
 

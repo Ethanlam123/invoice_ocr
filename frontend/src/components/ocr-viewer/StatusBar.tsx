@@ -8,6 +8,7 @@ interface StatusBarProps {
   elapsedMs: number | null;
   liveElapsedMs: number;
   blockCount: number;
+  pageCount: number | null;
   model: string | null;
   onDownload: () => void;
   onReset: () => void;
@@ -23,6 +24,7 @@ export default function StatusBar({
   elapsedMs,
   liveElapsedMs,
   blockCount,
+  pageCount,
   model,
   onDownload,
   onReset,
@@ -40,6 +42,9 @@ export default function StatusBar({
           <span className="status-status status-ok">
             {blockCount} blocks in {fmt(elapsedMs ?? 0)}
           </span>
+          {pageCount != null && pageCount > 1 && (
+            <span className="status-model">{pageCount} pages</span>
+          )}
           {model && <span className="status-model">{model}</span>}
         </>
       )}

@@ -14,10 +14,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import config
-from .blocks import markdown_text, normalize_blocks
-from .images import ImageValidationError, load_normalized, read_upload_capped
+from .blocks import document_markdown, markdown_text, normalize_blocks, normalize_document
+from .images import (
+    ImageValidationError,
+    NormalizedImage,
+    is_pdf,
+    load_normalized,
+    read_upload_capped,
+    render_pdf_pages,
+)
 from .pipeline import InferenceError, OcrBackend, build_backend
-from .schemas import Envelope, ErrorOut, ImageOut, OcrData
+from .schemas import Envelope, ErrorOut, OcrData, PageOut
 
 app = FastAPI(title="Invoice OCR Viewer API")
 app.add_middleware(
@@ -79,14 +86,16 @@ async def _vlm_reachable() -> bool:
 async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
     try:
         data = await read_upload_capped(file)
-        img = load_normalized(data)
+        pages: list[NormalizedImage] = (
+            render_pdf_pages(data) if is_pdf(data) else [load_normalized(data)]
+        )
     except ImageValidationError as exc:
         status = 413 if exc.code == "file_too_large" else 400
         return fail(status, exc.code, exc.message)
 
     started = time.perf_counter()
     try:
-        raw = await backend.run(img.png)
+        raw = await backend.run([p.png for p in pages])
     except InferenceError as exc:
         status = 503 if exc.code in ("vlm_server_unreachable", "pipeline_unavailable",
                                       "pipeline_init_failed") else 500
@@ -94,21 +103,31 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
     elapsed_ms = round((time.perf_counter() - started) * 1000)
 
     try:
-        # raw pipeline JSON minus the backend's temp-file path
-        raw = {k: v for k, v in raw.items() if k != "input_path"}
+        if "pages" in raw:  # multi-page: {"page_count": N, "pages": [...]}
+            for page_json in raw["pages"]:
+                page_json.pop("input_path", None)
+            blocks = normalize_document(raw["pages"])
+            markdown = document_markdown(raw["pages"])
+        else:  # single-page v1 shape
+            raw = {k: v for k, v in raw.items() if k != "input_path"}
+            res = raw.get("res", raw)
+            blocks = normalize_blocks(res)
+            markdown = markdown_text(res)
         if not isinstance(raw, dict):
             raise ValueError(f"pipeline result is a {type(raw).__name__}, not an object")
-        # pipeline JSON may nest single-image results under "res"
-        res = raw.get("res", raw)
         data = OcrData(
-            image=ImageOut(
-                width=img.width,
-                height=img.height,
-                mime="image/png",
-                data_url="data:image/png;base64," + base64.b64encode(img.png).decode(),
-            ),
-            blocks=normalize_blocks(res),
-            markdown=markdown_text(res),
+            pages=[
+                PageOut(
+                    index=i,
+                    width=p.width,
+                    height=p.height,
+                    mime="image/png",
+                    data_url="data:image/png;base64," + base64.b64encode(p.png).decode(),
+                )
+                for i, p in enumerate(pages)
+            ],
+            blocks=blocks,
+            markdown=markdown,
             raw=raw,
         )
     except Exception as exc:
@@ -120,5 +139,6 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
             "elapsed_ms": elapsed_ms,
             "model": config.MODEL_NAME if backend.mode == "real" else "stub",
             "mode": backend.mode,
+            "page_count": len(pages),
         },
     )
