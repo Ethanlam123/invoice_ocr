@@ -255,7 +255,8 @@ deterministic fake blocks and needs neither the MLX server nor the layout model:
    "correct", edit the text, save - the correction is stored
    (`corrected_content` + `reviewed_at`) and the block is marked reviewed;
    corrected text replaces the OCR text on every later read. Table blocks
-   carry model-generated HTML and are not hand-editable.
+   carry model-generated HTML and are not hand-editable. Note: extracted
+   fields are a snapshot from OCR time; corrections do not re-derive them.
 7. Download JSON returns the raw pipeline result (`parsing_res_list`,
    `layout_det_res`, dimensions; multi-page wrapped in `pages`).
 

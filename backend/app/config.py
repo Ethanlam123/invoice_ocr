@@ -30,6 +30,9 @@ ALLOWED_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
 
 # Postgres persistence: opt-in. Unset -> the app stays stateless (tests, demo).
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
+# cap for one human block correction; OCR block text is tiny, this only
+# blocks runaway pastes from becoming unbounded DB rows
+MAX_CORRECTION_CHARS = 100_000
 # Page PNGs live on disk; the DB stores paths only (keeps rows small).
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = Path(os.environ.get("DATA_DIR") or REPO_ROOT / "data")

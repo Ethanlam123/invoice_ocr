@@ -36,15 +36,25 @@ function BlockItem({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
   // tables carry model HTML; editing raw HTML by hand is not a review flow
   const correctable = canCorrect && !block.content_html && !editing;
 
+  function startEdit() {
+    setDraft(block.content);
+    setSaveFailed(false);
+    setEditing(true);
+  }
+
   async function save() {
     if (saving) return;
+    if (!draft.trim()) return; // backend rejects it; do not even send
     setSaving(true);
+    setSaveFailed(false);
     const ok = await onCorrect(block.id, draft);
     setSaving(false);
     if (ok) setEditing(false);
+    else setSaveFailed(true);
   }
 
   return (
@@ -89,15 +99,13 @@ function BlockItem({
               className="block-toggle block-toggle-correct"
               onClick={(e) => {
                 e.stopPropagation();
-                setDraft(block.content);
-                setEditing(true);
+                startEdit();
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.stopPropagation();
                   e.preventDefault();
-                  setDraft(block.content);
-                  setEditing(true);
+                  startEdit();
                 }
               }}
             >
@@ -132,6 +140,11 @@ function BlockItem({
               Cancel
             </button>
           </div>
+          {saveFailed && (
+            <p className="field-error" role="alert">
+              Could not save the correction. Is the backend running?
+            </p>
+          )}
         </div>
       )}
     </li>

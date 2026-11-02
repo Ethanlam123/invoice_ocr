@@ -215,11 +215,17 @@ async def get_document(doc_id: int) -> Envelope:
 @app.patch("/api/documents/{doc_id}/blocks/{block_id}")
 async def correct_block(doc_id: int, block_id: int, correction: BlockCorrection) -> Envelope:
     """Store a human correction for one block (review workflow)."""
-    if not db.persistence_enabled():
-        return fail(503, "persistence_disabled", "DATABASE_URL is not set; history is off.")
+    # input validation first, so it holds even with persistence disabled
     body = correction.corrected_content.strip()
     if not body:
         return fail(400, "invalid_request", "corrected_content must not be empty.")
+    if len(correction.corrected_content) > config.MAX_CORRECTION_CHARS:
+        return fail(
+            400, "invalid_request",
+            f"corrected_content exceeds {config.MAX_CORRECTION_CHARS} characters.",
+        )
+    if not db.persistence_enabled():
+        return fail(503, "persistence_disabled", "DATABASE_URL is not set; history is off.")
     updated = await asyncio.to_thread(db.correct_block, doc_id, block_id, body)
     if not updated:
         return fail(404, "not_found", f"Block {block_id} of document {doc_id} not found.")

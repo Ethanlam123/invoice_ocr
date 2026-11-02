@@ -434,4 +434,24 @@ test("review flow: correct a block of a stored document", async ({ page }) => {
   await expect(page.locator(".block-reviewed")).toBeVisible();
   expect(patchBody).toEqual({ corrected_content: "ACME Corp" });
   await expect(page.locator(".block-text")).toHaveText("ACME Corp");
+
+  // a failed save keeps the editor open and says why (no silent data loss)
+  await page.unroute("**/api/documents/7/blocks/0");
+  await page.route("**/api/documents/7/blocks/0", (route) =>
+    route.fulfill({
+      status: 503,
+      json: {
+        success: false, data: null,
+        error: { code: "persistence_disabled", message: "off" }, meta: null,
+      },
+    }),
+  );
+  await page.locator("#block-opt-0 .block-button").click();
+  await page.locator(".block-toggle-correct").click();
+  await page.locator(".block-editor textarea").fill("second try");
+  await page.getByRole("button", { name: "Save correction" }).click();
+  await expect(page.locator(".block-editor .field-error")).toContainText(
+    "Could not save the correction",
+  );
+  await expect(page.locator(".block-editor")).toBeVisible();
 });

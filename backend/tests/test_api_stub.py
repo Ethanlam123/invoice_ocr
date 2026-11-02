@@ -183,3 +183,20 @@ def test_ocr_meta_carries_classification_and_extraction(client: TestClient) -> N
     # stub page-2 text block "Total: 99.00" is extractable
     assert meta["extracted"]["total"]["value"] == 99.0
     assert meta["quality_flags"] == []
+
+
+def test_correction_rejects_oversize_even_without_database(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app import config
+
+    monkeypatch.setattr(config, "MAX_CORRECTION_CHARS", 10)
+    r = client.patch("/api/documents/1/blocks/0", json={"corrected_content": "x" * 11})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "invalid_request"
+
+
+def test_correction_rejects_empty_even_without_database(client: TestClient) -> None:
+    r = client.patch("/api/documents/1/blocks/0", json={"corrected_content": "  "})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "invalid_request"
