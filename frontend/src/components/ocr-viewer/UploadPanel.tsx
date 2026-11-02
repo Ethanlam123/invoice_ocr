@@ -13,6 +13,7 @@ interface UploadPanelProps {
 
 const ACCEPTED_TYPES = ["image/jpeg", "image/jpg", "image/png", "application/pdf"];
 const MAX_BYTES = 10 * 1024 * 1024;
+// display copy only; the backend enforces the real cap (backend MAX_PDF_PAGES)
 const MAX_PDF_PAGES = 8;
 
 export default function UploadPanel({ phase, disabled, onFile, onRun }: UploadPanelProps) {

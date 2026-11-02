@@ -86,15 +86,20 @@ def normalize_document(page_results: list[dict[str, Any]]) -> list[dict[str, Any
     fragments: dict[int, list[tuple[int, Any]]] = {}  # owner id -> [(page, bbox)]
     for page_no, res in enumerate(page_results):
         for b in res.get("parsing_res_list") or []:
-            gid = b.get("global_block_id")
-            grp = b.get("global_group_id")
-            if gid is not None and grp is not None and int(grp) != int(gid):
+            if b.get("global_block_id") is None or b.get("global_group_id") is None:
+                # without global ids, per-page block_id restarts per page and
+                # ids collide; fail loudly instead of breaking selection sync
+                raise ValueError(
+                    "multi-page results must carry global_block_id/global_group_id "
+                    "(engine restructure_pages contract)"
+                )
+            gid, grp = int(b["global_block_id"]), int(b["global_group_id"])
+            if grp != gid:
                 # continuation fragment of an earlier block: record span + bbox
-                span_end[int(grp)] = max(span_end.get(int(grp), 0), page_no)
-                fragments.setdefault(int(grp), []).append((page_no, b["block_bbox"]))
+                span_end[grp] = max(span_end.get(grp, 0), page_no)
+                fragments.setdefault(grp, []).append((page_no, b["block_bbox"]))
                 continue
-            id_ = int(gid) if gid is not None else int(b.get("block_id", len(out)))
-            out.append(_block_from(b, id_, page=page_no))
+            out.append(_block_from(b, gid, page=page_no))
     for block in out:
         end = span_end.get(block["id"])
         if end is None:

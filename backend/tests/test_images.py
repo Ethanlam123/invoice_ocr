@@ -115,3 +115,12 @@ def test_render_pdf_too_small_page_rejected() -> None:
     with pytest.raises(ImageValidationError) as ei:
         render_pdf_pages(_pdf([(20, 30)]))
     assert ei.value.code == "too_small"
+
+
+def test_render_pdf_pixel_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.images import render_pdf_pages
+
+    monkeypatch.setattr(config, "MAX_PIXELS", 1000)
+    with pytest.raises(ImageValidationError) as ei:
+        render_pdf_pages(_pdf([(600, 800)]))
+    assert ei.value.code == "too_many_pixels"

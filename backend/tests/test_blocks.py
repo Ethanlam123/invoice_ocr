@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.blocks import markdown_text, normalize_blocks, sanitize_table_html
 
 
@@ -163,3 +165,14 @@ def test_normalize_document_span_owner_carries_page_bboxes() -> None:
         {"page": 0, "bbox": [1, 2, 3, 4]},
         {"page": 1, "bbox": [5, 6, 7, 8]},
     ]
+
+
+def test_normalize_document_requires_global_ids() -> None:
+    from app.blocks import normalize_document
+
+    missing = {"parsing_res_list": [
+        {"block_id": 0, "block_order": 0, "block_label": "text",
+         "block_bbox": [0, 0, 10, 10], "block_content": "x"},
+    ]}
+    with pytest.raises(ValueError, match="global_block_id"):
+        normalize_document([missing])

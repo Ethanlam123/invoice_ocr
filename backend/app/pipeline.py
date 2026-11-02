@@ -167,13 +167,13 @@ class StubPipeline(OcrBackend):
 
     async def run(self, pngs: list[bytes]) -> dict[str, Any]:
         if len(pngs) == 1:
-            return self._page(pngs[0], 0, single=True)
+            return self._page(pngs[0], single=True)
         # multi-page fake mirrors the engine's merge contract: page 0 owns the
         # merged table HTML, page 1's fragment is emptied and group-linked
-        pages = [self._page(pngs[0], 0, single=False), self._fragment_page(pngs[1])]
+        pages = [self._page(pngs[0], single=False), self._fragment_page(pngs[1])]
         return {"page_count": len(pages), "pages": pages}
 
-    def _page(self, png: bytes, gid_base: int, single: bool) -> dict[str, Any]:
+    def _page(self, png: bytes, single: bool) -> dict[str, Any]:
         from PIL import Image
 
         with Image.open(io.BytesIO(png)) as im:
@@ -184,7 +184,7 @@ class StubPipeline(OcrBackend):
             # them during restructure_pages)
             if single:
                 return {}
-            return {"global_block_id": gid_base + n, "global_group_id": gid_base + n}
+            return {"global_block_id": n, "global_group_id": n}
 
         result = {
             "input_path": "/tmp/stub-should-be-stripped.png",

@@ -67,34 +67,39 @@ def render_pdf_pages(data: bytes) -> list[NormalizedImage]:
 
     try:
         doc = pdfium.PdfDocument(data)
-        page_count = len(doc)
-        if page_count == 0:
-            raise ImageValidationError("undecodable", "PDF has no pages.")
-        if page_count > config.MAX_PDF_PAGES:
-            raise ImageValidationError(
-                "too_many_pages",
-                f"PDF has {page_count} pages; limit is {config.MAX_PDF_PAGES}.",
-            )
-        pages: list[NormalizedImage] = []
-        for page in doc:
-            img = page.render(scale=config.PDF_RENDER_DPI / 72).to_pil().convert("RGB")
-            width, height = img.size
-            if min(width, height) < config.MIN_SIDE:
+        try:
+            page_count = len(doc)
+            if page_count == 0:
+                raise ImageValidationError("undecodable", "PDF has no pages.")
+            if page_count > config.MAX_PDF_PAGES:
                 raise ImageValidationError(
-                    "too_small",
-                    f"PDF page renders to {width}x{height}px at {config.PDF_RENDER_DPI} DPI; "
-                    f"minimum side is {config.MIN_SIDE}px.",
+                    "too_many_pages",
+                    f"PDF has {page_count} pages; limit is {config.MAX_PDF_PAGES}.",
                 )
-            if width * height > config.MAX_PIXELS:
-                raise ImageValidationError(
-                    "too_many_pixels",
-                    f"PDF page renders to {width * height:,} pixels at "
-                    f"{config.PDF_RENDER_DPI} DPI; limit is {config.MAX_PIXELS:,}.",
+            pages: list[NormalizedImage] = []
+            for page in doc:
+                img = page.render(scale=config.PDF_RENDER_DPI / 72).to_pil().convert("RGB")
+                width, height = img.size
+                if min(width, height) < config.MIN_SIDE:
+                    raise ImageValidationError(
+                        "too_small",
+                        f"PDF page renders to {width}x{height}px at "
+                        f"{config.PDF_RENDER_DPI} DPI; minimum side is {config.MIN_SIDE}px.",
+                    )
+                if width * height > config.MAX_PIXELS:
+                    raise ImageValidationError(
+                        "too_many_pixels",
+                        f"PDF page renders to {width * height:,} pixels at "
+                        f"{config.PDF_RENDER_DPI} DPI; limit is {config.MAX_PIXELS:,}.",
+                    )
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                pages.append(
+                    NormalizedImage(png=buf.getvalue(), width=width, height=height)
                 )
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            pages.append(NormalizedImage(png=buf.getvalue(), width=width, height=height))
-        return pages
+            return pages
+        finally:
+            doc.close()
     except ImageValidationError:
         raise
     except Exception as exc:

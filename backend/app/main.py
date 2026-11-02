@@ -113,8 +113,6 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
             res = raw.get("res", raw)
             blocks = normalize_blocks(res)
             markdown = markdown_text(res)
-        if not isinstance(raw, dict):
-            raise ValueError(f"pipeline result is a {type(raw).__name__}, not an object")
         data = OcrData(
             pages=[
                 PageOut(
