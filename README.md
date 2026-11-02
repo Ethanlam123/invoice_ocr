@@ -7,7 +7,9 @@ between the document image and the reading-order list, and download the raw
 inference JSON. Tables that continue onto the next PDF page are merged into one
 block spanning both pages.
 
-All inference runs locally. No cloud APIs, no auth, no database.
+All inference runs locally. No cloud APIs, no auth. Persistence is optional:
+with `DATABASE_URL` set, every run is stored in local Postgres and can be
+reopened from a history strip (see below); without it the app stays stateless.
 
 ## Architecture
 
@@ -133,24 +135,51 @@ Error envelope: `{ "success": false, "data": null, "error": { "code", "message" 
 | `VLM_MODEL_NAME` | `mlx-community/PaddleOCR-VL-1.6-4bit` | backend: model name passed to the server |
 | `OCR_BACKEND` | `real` | backend: `stub` returns deterministic fake results, no model |
 | `NEXT_PUBLIC_API_BASE` | `http://localhost:8000` | frontend: API base URL |
+| `DATABASE_URL` | _(unset)_ | backend: Postgres for persistence; unset = stateless, history hidden |
+| `DATA_DIR` | `<repo>/data` | backend: where page PNGs are written (DB stores paths only) |
 
 CORS allows only `localhost:3000` / `127.0.0.1:3000`.
+
+### Optional: Postgres persistence
+
+Without `DATABASE_URL` the app is exactly the stateless v1 (no DB needed).
+With it, every successful OCR run is stored (documents + pages + blocks) and a
+"Recent" strip in the UI can reopen any stored document:
+
+```bash
+brew install postgresql@17 && brew services start postgresql@17
+createdb invoice_ocr
+DATABASE_URL="postgresql://localhost/invoice_ocr" uv run uvicorn app.main:app --port 8000
+```
+
+- Schema is applied automatically on first use (`backend/app/schema.sql`, idempotent)
+- Page images live under `DATA_DIR/documents/<id>/`; the DB stores paths only
+- New endpoints: `GET /api/documents` (list) and `GET /api/documents/{id}`
+  (same data shape as `POST /api/ocr`, so the viewer renders stored documents
+  with the identical components)
+- A persistence failure never discards an OCR result: the response still
+  succeeds and `meta.persistence = "failed"` marks it
+- No ORM by decision: the whole path is four fixed statements and the pipeline
+  already yields dicts; `doc_type`/`extracted` stay JSONB so new document
+  types need no DDL
 
 ### Repository layout
 
 ```
-backend/     FastAPI app: main.py (routes), images.py (validation/EXIF),
+backend/     FastAPI app: main.py (routes), images.py (validation/EXIF/PDF),
              pipeline.py (real + stub backends), blocks.py (normalize/sanitize),
-             schemas.py (envelope), config.py; tests/ (pytest, stub-only)
+             db.py + schema.sql (optional Postgres persistence), schemas.py
+             (envelope), config.py; tests/ (pytest, stub-only + gated SQL tests)
 vlm-server/  uv project holding only mlx-vlm (isolated from paddle deps)
 frontend/    Next.js app: app/page.tsx (state machine),
              components/ocr-viewer/ (UploadPanel, ImagePane+SVG overlay,
-             BlockList, StatusBar, ErrorBanner), lib/ (api, types, blocks)
+             BlockList, StatusBar, ErrorBanner, HistoryStrip), lib/ (api, types, blocks)
 scripts/     dev.sh, make_sample_invoice.py, make_multi_page_invoice.py,
              run_real_inference.py, eval_dataset.py
-e2e/         Playwright specs against a mocked /api/ocr
+e2e/         Playwright specs against a mocked /api/ocr and /api/documents
 docs/        VALIDATION.md (real-inference log), eval_summary.json (booleans)
 samples/     our own PIL-generated test invoice (committable)
+data/        gitignored; persisted page PNGs (DB stores paths only)
 ```
 
 ## Requirements
@@ -211,7 +240,9 @@ deterministic fake blocks and needs neither the MLX server nor the layout model:
    continuation page draws a dashed box). Click either side to select;
    arrows or j / k step through blocks; Esc clears. Table blocks render as
    sanitized HTML with a source toggle.
-4. Download JSON returns the raw pipeline result (`parsing_res_list`,
+4. With persistence on, a Recent strip under the header lists stored
+   documents; clicking one reopens it exactly as it was first rendered.
+5. Download JSON returns the raw pipeline result (`parsing_res_list`,
    `layout_det_res`, dimensions; multi-page wrapped in `pages`).
 
 ## Tests
@@ -221,6 +252,9 @@ uv run --project backend pytest          # unit/API tests, stub backend, no mode
 uv run --project backend ruff check app tests
 cd frontend && npm test                  # vitest unit tests
 cd frontend && npm run e2e               # Playwright against mocked API
+
+# opt-in SQL round-trip tests against a local Postgres (5 tests skip without it)
+TEST_DATABASE_URL="postgresql://localhost/invoice_ocr" uv run --project backend pytest
 ```
 
 Live-model checks (require the services above, never part of pytest):

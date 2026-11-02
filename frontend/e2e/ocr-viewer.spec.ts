@@ -136,7 +136,17 @@ function multiPageEnvelope() {
   };
 }
 
+async function mockEmptyHistory(page: Page) {
+  // e2e must not depend on whatever a real backend (if running) has stored
+  await page.route("**/api/documents", (route) =>
+    route.fulfill({
+      json: { success: true, data: { documents: [] }, error: null, meta: { count: 0 } },
+    }),
+  );
+}
+
 async function runOcrWith(page: Page, payload: object) {
+  await mockEmptyHistory(page);
   await page.route("**/api/ocr", (route) => route.fulfill({ json: payload }));
   await page.goto("/");
   await page.setInputFiles('input[type="file"]', FIXTURE);
@@ -259,6 +269,7 @@ test("upload stays locked during processing; a file change cannot race the run",
     await held; // hold the run in "processing" phase
     await route.fulfill({ json: envelope() });
   });
+  await mockEmptyHistory(page);
   await page.goto("/");
   await page.setInputFiles('input[type="file"]', FIXTURE);
   await page.getByRole("button", { name: "Run OCR" }).click();
@@ -317,4 +328,38 @@ test("multi-page PDF result: pages stack, span table tags p.1-2, selection cross
 
   // the span table renders its sanitized HTML and lives in the list once
   await expect(page.locator(".block-table td")).toHaveCount(2);
+});
+
+test("history strip lists stored documents and reopens one", async ({ page }) => {
+  await page.route("**/api/documents", (route) =>
+    route.fulfill({
+      json: {
+        success: true,
+        data: {
+          documents: [
+            {
+              id: 2, filename: "receipt.png", doc_type: "unknown", page_count: 1,
+              quality_flags: [], created_at: "2026-11-02T10:00:00+00:00",
+            },
+            {
+              id: 1, filename: "invoice.pdf", doc_type: "unknown", page_count: 2,
+              quality_flags: [], created_at: "2026-11-02T09:00:00+00:00",
+            },
+          ],
+        },
+        error: null,
+        meta: { count: 2 },
+      },
+    }),
+  );
+  await page.route("**/api/documents/2", (route) => route.fulfill({ json: envelope() }));
+  await page.goto("/");
+
+  await expect(page.locator(".history-item")).toHaveCount(2);
+
+  // opening a stored document renders it exactly like a fresh OCR result
+  await page.locator(".history-item", { hasText: "receipt.png" }).click();
+  await expect(page.getByText("5 blocks in")).toBeVisible();
+  await expect(page.locator(".overlay-rect")).toHaveCount(5);
+  await expect(page.locator(".history-item").first()).toHaveClass(/history-item-active/);
 });

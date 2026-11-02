@@ -159,3 +159,17 @@ def test_health(client: TestClient) -> None:
     assert r.status_code == 200
     meta = r.json()["meta"]
     assert meta["backend"] == "ok" and meta["mode"] == "stub"
+
+
+def test_history_endpoints_disabled_without_database(client: TestClient) -> None:
+    for path in ("/api/documents", "/api/documents/1"):
+        body = client.get(path).json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "persistence_disabled"
+
+
+def test_ocr_meta_has_no_document_id_without_database(client: TestClient) -> None:
+    r = _post(client, png_bytes(200, 150))
+    meta = r.json()["meta"]
+    assert "document_id" not in meta
+    assert "persistence" not in meta

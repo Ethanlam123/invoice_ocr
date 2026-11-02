@@ -6,14 +6,14 @@ import asyncio
 import base64
 import time
 import urllib.request
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import config
+from . import config, db
 from .blocks import document_markdown, markdown_text, normalize_blocks, normalize_document
 from .images import (
     ImageValidationError,
@@ -24,7 +24,14 @@ from .images import (
     render_pdf_pages,
 )
 from .pipeline import InferenceError, OcrBackend, build_backend
-from .schemas import Envelope, ErrorOut, OcrData, PageOut
+from .schemas import (
+    DocumentListData,
+    DocumentSummary,
+    Envelope,
+    ErrorOut,
+    OcrData,
+    PageOut,
+)
 
 app = FastAPI(title="Invoice OCR Viewer API")
 app.add_middleware(
@@ -54,8 +61,9 @@ def fail(status: int, code: str, message: str) -> JSONResponse:
 
 @app.exception_handler(RequestValidationError)
 async def on_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    # keep the error envelope shape for FastAPI's own 422s (e.g. missing file part)
-    return fail(422, "invalid_request", "Request must include a 'file' multipart field.")
+    # keep the error envelope shape for FastAPI's own 422s (e.g. missing file
+    # part, non-integer path params)
+    return fail(422, "invalid_request", "Request parameters are missing or invalid.")
 
 
 @app.get("/api/health")
@@ -92,6 +100,8 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
     except ImageValidationError as exc:
         status = 413 if exc.code == "file_too_large" else 400
         return fail(status, exc.code, exc.message)
+    # computed while `data` is still the upload bytes (it is reused below)
+    upload_mime = "application/pdf" if is_pdf(data) else file.content_type or "image/png"
 
     started = time.perf_counter()
     try:
@@ -130,13 +140,58 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
         )
     except Exception as exc:
         return fail(500, "normalization_failed", f"Failed to normalize pipeline output: {exc}")
+
+    meta: dict[str, Any] = {
+        "elapsed_ms": elapsed_ms,
+        "model": config.MODEL_NAME if backend.mode == "real" else "stub",
+        "mode": backend.mode,
+        "page_count": len(pages),
+    }
+    if db.persistence_enabled():
+        # OCR already succeeded; a persistence failure must not discard the
+        # result the user waited for - surface it in meta instead.
+        try:
+            meta["document_id"] = await asyncio.to_thread(
+                db.save_document,
+                db.NewDocument(
+                    filename=file.filename or "upload",
+                    mime=upload_mime,
+                    elapsed_ms=elapsed_ms,
+                    model=meta["model"],
+                    mode=backend.mode,
+                    pages=pages,
+                    blocks=[b.model_dump() for b in data.blocks],
+                    markdown=markdown,
+                    raw=raw,
+                ),
+            )
+        except Exception:
+            meta["persistence"] = "failed"
+    return Envelope(success=True, data=data, meta=meta)
+
+
+@app.get("/api/documents")
+async def list_documents() -> Envelope:
+    if not db.persistence_enabled():
+        return fail(503, "persistence_disabled", "DATABASE_URL is not set; history is off.")
+    docs = await asyncio.to_thread(db.list_documents)
     return Envelope(
         success=True,
-        data=data,
-        meta={
-            "elapsed_ms": elapsed_ms,
-            "model": config.MODEL_NAME if backend.mode == "real" else "stub",
-            "mode": backend.mode,
-            "page_count": len(pages),
-        },
+        data=DocumentListData(documents=[DocumentSummary(**d) for d in docs]),
+        meta={"count": len(docs)},
     )
+
+
+@app.get("/api/documents/{doc_id}")
+async def get_document(doc_id: int) -> Envelope:
+    if not db.persistence_enabled():
+        return fail(503, "persistence_disabled", "DATABASE_URL is not set; history is off.")
+    try:
+        doc = await asyncio.to_thread(db.get_document, doc_id)
+    except OSError as exc:
+        return fail(500, "storage_error", f"Stored page image is missing: {exc}")
+    if doc is None:
+        return fail(404, "not_found", f"Document {doc_id} not found.")
+    meta = doc.pop("meta")
+    # validates stored rows against the same contract the live endpoint emits
+    return Envelope(success=True, data=OcrData(**doc), meta=meta)

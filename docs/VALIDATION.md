@@ -161,3 +161,41 @@ markdown join, PDF envelope, too_many_pages API), 8 vitest (pageLabel added),
 issue: vitest had been collecting e2e/*.spec.ts and failing the file on every
 `npm test` run (visible at the previous HEAD); `frontend/vitest.config.ts` now
 scopes vitest to src/.
+
+## Postgres persistence, Phase 0 (2026-11-02)
+
+Local Postgres 17.11 (Homebrew, `brew services`), database `invoice_ocr`.
+Schema applied automatically on first use (`backend/app/schema.sql`, idempotent,
+verified by `\dt` after the first request). No ORM: four fixed statements
+(discussion in README).
+
+- Live stub-mode browser session (backend on :8000 with `DATABASE_URL`,
+  frontend on :3000): uploaded `samples/multi_page_invoice.pdf`, run
+  persisted as document id 14. `psql` verified all three tables: documents
+  row (filename/mime/page_count=2/doc_type=unknown/mode=stub), two
+  document_pages rows (1241x1754, paths under `data/documents/14/`), four
+  blocks rows including the cross-page table (page=0, page_end=1) and the
+  page-2 text block (block_id=11).
+- History strip appeared after the run (filename / unknown / 2 pages /
+  timestamp). "New document" reset, then clicking the strip entry re-rendered
+  the stored document identically to the live result (2 page frames, 5 rects,
+  active entry highlighted); pages are re-read from disk and served as the
+  same data-URL shape, so the viewer uses one rendering path for live and
+  stored documents. Console clean (no errors/warnings).
+- One vision review of the live screenshot: strip, highlight, p.1-2 tag and
+  layout confirmed correct; reported block/content mismatches are expected
+  stub behavior (placeholder blocks over the real page image). One real copy
+  fix from it: the page-count tag read "p.2" (looked like "page 2"); now
+  "2 pages".
+- Test-isolation bug found by the suites: with a real backend running, e2e
+  pages fetched the real `/api/documents` and matched a live DB row, breaking
+  the multi-page spec (`getByText("2 pages")` strict-mode violation). All e2e
+  tests now mock `/api/documents` (`mockEmptyHistory`), verified green with
+  the real backend still running.
+- Real-model note: the OCR path itself is unchanged since commit cf365f1;
+  this phase only appends persistence after a successful run (stub-verified
+  live above; the SQL path is exercised by the gated tests with the same
+  code). No new latency or accuracy claims.
+
+Suites: 47 pytest with `TEST_DATABASE_URL` (42 without, 5 gated skips),
+ruff clean, tsc clean, 8 vitest, 6 e2e, production build clean.

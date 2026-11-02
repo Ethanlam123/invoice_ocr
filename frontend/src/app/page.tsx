@@ -6,12 +6,13 @@ import "@/components/ocr-viewer/viewer.css";
 
 import BlockList from "@/components/ocr-viewer/BlockList";
 import ErrorBanner from "@/components/ocr-viewer/ErrorBanner";
+import HistoryStrip from "@/components/ocr-viewer/HistoryStrip";
 import ImagePane from "@/components/ocr-viewer/ImagePane";
 import StatusBar from "@/components/ocr-viewer/StatusBar";
 import UploadPanel, { type Phase } from "@/components/ocr-viewer/UploadPanel";
-import { runOcr } from "@/lib/api";
+import { fetchDocument, fetchDocuments, runOcr } from "@/lib/api";
 import { downloadJson, resultFilename, stepBlockId } from "@/lib/blocks";
-import type { ApiError, Envelope, OcrData } from "@/lib/types";
+import type { ApiError, DocumentSummary, Envelope, OcrData } from "@/lib/types";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -23,6 +24,9 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [liveElapsed, setLiveElapsed] = useState(0);
   const [previewDims, setPreviewDims] = useState<{ width: number; height: number } | null>(null);
+  const [history, setHistory] = useState<DocumentSummary[] | null>(null); // null = persistence off
+  const [activeDocId, setActiveDocId] = useState<number | null>(null);
+  const [historyName, setHistoryName] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const objectUrlRef = useRef<string | null>(null);
 
@@ -33,6 +37,15 @@ export default function Home() {
     },
     [],
   );
+
+  useEffect(() => {
+    // hidden entirely when the backend has no DATABASE_URL (503 -> null)
+    fetchDocuments().then((env) => setHistory(env?.data?.documents ?? null));
+  }, []);
+
+  const refreshHistory = useCallback(() => {
+    fetchDocuments().then((env) => setHistory(env?.data?.documents ?? null));
+  }, []);
 
   const handleFile = useCallback((f: File) => {
     // stop any in-flight run's timer so it cannot leak into the next session
@@ -45,6 +58,8 @@ export default function Home() {
     setMeta(null);
     setError(null);
     setSelectedId(null);
+    setActiveDocId(null);
+    setHistoryName(null);
     setPhase("ready");
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     setPreviewDims(null);
@@ -82,6 +97,10 @@ export default function Home() {
       setResult(env.data);
       setMeta(env.meta);
       setPhase("done");
+      if (env.meta?.document_id) {
+        setActiveDocId(env.meta.document_id);
+        refreshHistory();
+      }
     } else {
       setResult(null);
       setError(env.error ?? { code: "unknown_error", message: "Unexpected empty response." });
@@ -95,12 +114,43 @@ export default function Home() {
     setMeta(null);
     setError(null);
     setSelectedId(null);
+    setActiveDocId(null);
+    setHistoryName(null);
     setPhase("idle");
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     objectUrlRef.current = null;
     setPreviewUrl(null);
     setPreviewDims(null);
   }, []);
+
+  const handleOpenDocument = useCallback(
+    async (id: number) => {
+      if (phase === "processing") return;
+      if (timerRef.current) clearInterval(timerRef.current);
+      setPhase("processing"); // brief: shows busy state while pages download
+      const env = await fetchDocument(id);
+      if (env?.success && env.data) {
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+        setFile(null);
+        setPreviewUrl(null);
+        setPreviewDims(null);
+        setResult(env.data);
+        setMeta(env.meta);
+        setError(null);
+        setSelectedId(null);
+        setActiveDocId(id);
+        setHistoryName(env.meta?.filename ?? `document ${id}`);
+        setPhase("done");
+      } else {
+        setPhase("error");
+        setError(
+          env?.error ?? { code: "network_error", message: "Cannot load the stored document." },
+        );
+      }
+    },
+    [phase],
+  );
 
   const handleListKey = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -135,13 +185,22 @@ export default function Home() {
         <UploadPanel phase={phase} disabled={phase === "processing"} onFile={handleFile} onRun={handleRun} />
       </header>
 
+      {history && (
+        <HistoryStrip
+          documents={history}
+          activeId={activeDocId}
+          disabled={phase === "processing"}
+          onOpen={handleOpenDocument}
+        />
+      )}
+
       {error && <ErrorBanner error={error} />}
 
       <main className="split">
         <section className="pane pane-image" aria-label="Document and detected regions">
           <StatusBar
             phase={phase}
-            fileName={file?.name ?? null}
+            fileName={file?.name ?? historyName}
             elapsedMs={meta?.elapsed_ms ?? null}
             liveElapsedMs={liveElapsed}
             blockCount={blocks.length}

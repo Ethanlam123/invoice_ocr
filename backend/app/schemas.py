@@ -35,6 +35,19 @@ class OcrData(BaseModel):
     raw: dict[str, Any]
 
 
+class DocumentSummary(BaseModel):
+    id: int
+    filename: str
+    doc_type: str
+    page_count: int
+    quality_flags: list[str]
+    created_at: str
+
+
+class DocumentListData(BaseModel):
+    documents: list[DocumentSummary]
+
+
 class ErrorOut(BaseModel):
     code: str
     message: str
@@ -42,6 +55,6 @@ class ErrorOut(BaseModel):
 
 class Envelope(BaseModel):
     success: bool
-    data: OcrData | None = None
+    data: OcrData | DocumentListData | None = None
     error: ErrorOut | None = None
     meta: dict[str, Any] | None = None

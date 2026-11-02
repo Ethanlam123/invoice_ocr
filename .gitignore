@@ -14,6 +14,9 @@ frontend/node_modules/
 # Eval samples downloaded from third-party datasets (license not cleared for redistribution)
 eval_samples/
 
+# Persisted OCR documents (page PNGs; DB stores only paths)
+data/
+
 # Model caches if kept local
 models/
 

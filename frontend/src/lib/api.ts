@@ -1,4 +1,4 @@
-import type { Envelope } from "./types";
+import type { DocumentListEnvelope, Envelope } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 const REQUEST_TIMEOUT_MS = 300_000; // real inference can take a while; 5 min cap
@@ -32,6 +32,30 @@ export async function runOcr(file: File): Promise<Envelope> {
 export async function fetchHealth(): Promise<Envelope | null> {
   try {
     const res = await fetch(`${API_BASE}/api/health`);
+    return (await res.json()) as Envelope;
+  } catch {
+    return null;
+  }
+}
+
+// null = persistence off (503) or unreachable: the history strip stays hidden
+export async function fetchDocuments(): Promise<DocumentListEnvelope | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/documents`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as DocumentListEnvelope;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchDocument(id: number): Promise<Envelope | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/documents/${id}`, {
+      signal: AbortSignal.timeout(30_000), // pages come back as base64 data URLs
+    });
     return (await res.json()) as Envelope;
   } catch {
     return null;

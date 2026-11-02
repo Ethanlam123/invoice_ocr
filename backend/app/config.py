@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 # MLX-VLM inference server (recognition only; layout runs in this process on CPU)
 VLM_SERVER_URL = os.environ.get("VLM_SERVER_URL", "http://localhost:8111/")
@@ -26,3 +27,9 @@ MAX_PDF_PAGES = 8  # 8 pages x ~20 s stays under the 5 min client timeout
 
 # CORS: local dev frontend only
 ALLOWED_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
+
+# Postgres persistence: opt-in. Unset -> the app stays stateless (tests, demo).
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+# Page PNGs live on disk; the DB stores paths only (keeps rows small).
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = Path(os.environ.get("DATA_DIR") or REPO_ROOT / "data")
