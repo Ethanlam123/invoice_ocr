@@ -199,3 +199,37 @@ verified by `\dt` after the first request). No ORM: four fixed statements
 
 Suites: 47 pytest with `TEST_DATABASE_URL` (42 without, 5 gated skips),
 ruff clean, tsc clean, 8 vitest, 6 e2e, production build clean.
+
+## Phase 1: rule classification + quality flags (2026-11-02)
+
+`app/classify.py` (keyword rules, hard 1.0/0.0 confidence) and
+`app/quality.py` (garbled / sparse / ragged-table flags); results stored on
+documents (doc_type, quality_flags) and surfaced in meta + the status bar.
+
+Measurement on real inference (MLX-VLM up, real mode, 7 files, ~12-21 s each,
+all persisted to Postgres as a side-effect check of real-mode persistence):
+
+| file | doc_type | truth |
+| ---- | -------- | ----- |
+| ds_0 / ds_1 / ds_10 / ds_100 / ds_101 (mychen76) | invoice | invoice (ds_10/100/101 confirmed by image inspection; the word lands in header/paragraph_title blocks depending on layout) |
+| invoice_sample.png | invoice | invoice |
+| multi_page_invoice.pdf | invoice | invoice |
+
+7/7 correct in this run. Honest caveats measured along the way:
+
+- Recognition variance is real: ds_1's "Invoice no: 61356291" line was read
+  as Thai-garbled text ("ะทีโทรทัศน์: No:...") on one of three runs, and the
+  classifier then correctly returned unknown - the keyword was simply not in
+  the OCR output. Classification is bounded by recognition quality; this is
+  the concrete motivation for Phase 2 verification and, if needed, Phase 4.
+- Two input-selection bugs found by measurement and fixed: keywords in text
+  blocks were never seen when title blocks existed (now heading-class blocks
+  + first 3 text blocks are joined), and label "header" was not in the
+  heading set (mychen76 puts "Invoice no" there).
+- quality_flags stayed empty on all 7 clean samples (expected); the Thai
+  garble does NOT trigger the garbled heuristic (Thai characters count as
+  alnum) - recorded as a known limitation of script-agnostic heuristics.
+
+Suites: 12 new classify/quality tests; 59 pytest with TEST_DATABASE_URL
+(54 + 5 gated skips without), ruff, tsc, 8 vitest, 6 e2e (doc_type + flag
+chip assertions added), production build clean.

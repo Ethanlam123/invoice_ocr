@@ -242,7 +242,13 @@ deterministic fake blocks and needs neither the MLX server nor the layout model:
    sanitized HTML with a source toggle.
 4. With persistence on, a Recent strip under the header lists stored
    documents; clicking one reopens it exactly as it was first rendered.
-5. Download JSON returns the raw pipeline result (`parsing_res_list`,
+5. Every run is classified by keyword rules (invoice / receipt /
+   purchase_order / unknown, from heading-class and leading text blocks);
+   the status bar shows the type plus any OCR quality flags (garbled text,
+   sparse blocks, ragged tables). Flags are advisory - they never alter
+   content. Recognition noise can hide the keyword (measured on real
+   samples; see docs/VALIDATION.md).
+6. Download JSON returns the raw pipeline result (`parsing_res_list`,
    `layout_det_res`, dimensions; multi-page wrapped in `pages`).
 
 ## Tests
@@ -277,7 +283,13 @@ stored annotations are used only as a labeled reference (`ast.literal_eval`, nev
 
 ## Known limitations (v1)
 
-- Layout blocks only; no per-word boxes, no business-field extraction.
+- Layout blocks only; no per-word boxes, no business-field extraction yet
+  (doc-type classification and quality flags exist; field extraction is the
+  next phase).
+- Classification is keyword-based: a document whose self-identifying word is
+  misread by OCR (observed on one sample) or absent falls to `unknown`.
+- Quality heuristics are Latin-script-centric; CJK garble does not trip the
+  alphanumeric-ratio check.
 - `block_order` is null for some layout classes (header/table/footer); the viewer
   falls back to pipeline order for those.
 - One document per run; PDFs are capped at 8 pages (inference is ~15-20 s per

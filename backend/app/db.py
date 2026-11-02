@@ -38,6 +38,8 @@ class NewDocument:
     blocks: list[dict[str, Any]]  # BlockOut-shaped dicts
     markdown: str
     raw: dict[str, Any]
+    doc_type: str = "unknown"
+    quality_flags: list[str] | None = None
 
 
 def persistence_enabled() -> bool:
@@ -90,6 +92,8 @@ def save_document(doc: NewDocument) -> int:
         "elapsed_ms": doc.elapsed_ms,
         "model": doc.model,
         "mode": doc.mode,
+        "doc_type": doc.doc_type,
+        "quality_flags": Json(doc.quality_flags or []),
         "markdown": doc.markdown,
         "raw": Json(doc.raw),
     }
@@ -97,9 +101,10 @@ def save_document(doc: NewDocument) -> int:
         doc_id = int(
             conn.execute(
                 "INSERT INTO documents (filename, mime, page_count, elapsed_ms, model,"
-                " mode, markdown, raw) VALUES (%(filename)s, %(mime)s, %(page_count)s,"
-                " %(elapsed_ms)s, %(model)s, %(mode)s, %(markdown)s, %(raw)s)"
-                " RETURNING id",
+                " mode, doc_type, quality_flags, markdown, raw)"
+                " VALUES (%(filename)s, %(mime)s, %(page_count)s, %(elapsed_ms)s,"
+                " %(model)s, %(mode)s, %(doc_type)s, %(quality_flags)s, %(markdown)s,"
+                " %(raw)s) RETURNING id",
                 params,
             ).fetchone()[0]
         )

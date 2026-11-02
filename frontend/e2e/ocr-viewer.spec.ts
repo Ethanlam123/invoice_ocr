@@ -83,7 +83,10 @@ function envelope() {
       raw: { parsing_res_list: [], marker: "mock-raw" },
     },
     error: null,
-    meta: { elapsed_ms: 1234, model: "stub", mode: "e2e-mock", page_count: 1 },
+    meta: {
+      elapsed_ms: 1234, model: "stub", mode: "e2e-mock", page_count: 1,
+      doc_type: "invoice", quality_flags: ["garbled:block-4"],
+    },
   };
 }
 
@@ -299,6 +302,10 @@ test("multi-page PDF result: pages stack, span table tags p.1-2, selection cross
   // page count chip in the status bar; span tag in the block list
   await expect(page.getByText("3 blocks in")).toBeVisible();
   await expect(page.getByText("2 pages")).toBeVisible();
+  await expect(page.locator(".status-model", { hasText: "invoice" })).toBeVisible();
+  await expect(
+    page.locator(".status-flags", { hasText: "1 quality flag" }),
+  ).toBeVisible();
   await expect(page.locator(".block-page", { hasText: "p.1-2" })).toBeVisible();
 
   // rects land on their pages: p1 has 2, p2 has text + the table continuation

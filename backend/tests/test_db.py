@@ -100,7 +100,8 @@ def test_ocr_persists_and_history_round_trip(pg_client: TestClient) -> None:
         listed = pg_client.get("/api/documents").json()
         assert listed["success"] is True
         entry = next(d for d in listed["data"]["documents"] if d["id"] == doc_id)
-        assert entry["filename"] == "inv.png" and entry["doc_type"] == "unknown"
+        assert entry["filename"] == "inv.png"
+        assert entry["doc_type"] == "invoice"  # stub title is "INVOICE" -> rules fire
 
         detail = pg_client.get(f"/api/documents/{doc_id}").json()
         assert detail["success"] is True

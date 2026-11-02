@@ -55,6 +55,7 @@ export interface Envelope {
     page_count?: number;
     document_id?: number;
     doc_type?: string;
+    quality_flags?: string[];
     filename?: string;
   } | null;
 }

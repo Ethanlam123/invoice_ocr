@@ -244,6 +244,11 @@
   color: var(--ink);
 }
 
+.status-flags {
+  color: var(--danger);
+  cursor: help;
+}
+
 /* ---- Status bar ---- */
 
 .status-bar {

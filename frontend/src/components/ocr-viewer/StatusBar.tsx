@@ -10,6 +10,8 @@ interface StatusBarProps {
   blockCount: number;
   pageCount: number | null;
   model: string | null;
+  docType: string | null;
+  qualityFlags: string[] | null;
   onDownload: () => void;
   onReset: () => void;
 }
@@ -26,6 +28,8 @@ export default function StatusBar({
   blockCount,
   pageCount,
   model,
+  docType,
+  qualityFlags,
   onDownload,
   onReset,
 }: StatusBarProps) {
@@ -42,6 +46,15 @@ export default function StatusBar({
           <span className="status-status status-ok">
             {blockCount} blocks in {fmt(elapsedMs ?? 0)}
           </span>
+          {docType && <span className="status-model">{docType}</span>}
+          {qualityFlags && qualityFlags.length > 0 && (
+            <span
+              className="status-model status-flags"
+              title={qualityFlags.join("\n")}
+            >
+              {qualityFlags.length} quality flag{qualityFlags.length > 1 ? "s" : ""}
+            </span>
+          )}
           {pageCount != null && pageCount > 1 && (
             <span className="status-model">{pageCount} pages</span>
           )}

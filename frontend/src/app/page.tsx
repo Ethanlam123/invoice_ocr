@@ -206,6 +206,8 @@ export default function Home() {
             blockCount={blocks.length}
             pageCount={meta?.page_count ?? null}
             model={meta?.model ?? null}
+            docType={meta?.doc_type ?? null}
+            qualityFlags={meta?.quality_flags ?? null}
             onDownload={() => result && downloadJson(result.raw, resultFilename())}
             onReset={handleReset}
           />

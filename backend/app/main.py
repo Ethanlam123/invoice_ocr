@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from . import config, db
 from .blocks import document_markdown, markdown_text, normalize_blocks, normalize_document
+from .classify import classify
 from .images import (
     ImageValidationError,
     NormalizedImage,
@@ -24,6 +25,7 @@ from .images import (
     render_pdf_pages,
 )
 from .pipeline import InferenceError, OcrBackend, build_backend
+from .quality import quality_flags
 from .schemas import (
     DocumentListData,
     DocumentSummary,
@@ -141,11 +143,16 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
     except Exception as exc:
         return fail(500, "normalization_failed", f"Failed to normalize pipeline output: {exc}")
 
+    doc_type, _confidence = classify(blocks)
+    flags = quality_flags(blocks)
+
     meta: dict[str, Any] = {
         "elapsed_ms": elapsed_ms,
         "model": config.MODEL_NAME if backend.mode == "real" else "stub",
         "mode": backend.mode,
         "page_count": len(pages),
+        "doc_type": doc_type,
+        "quality_flags": flags,
     }
     if db.persistence_enabled():
         # OCR already succeeded; a persistence failure must not discard the
@@ -159,6 +166,8 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
                     elapsed_ms=elapsed_ms,
                     model=meta["model"],
                     mode=backend.mode,
+                    doc_type=doc_type,
+                    quality_flags=flags,
                     pages=pages,
                     blocks=[b.model_dump() for b in data.blocks],
                     markdown=markdown,
