@@ -40,6 +40,7 @@ class NewDocument:
     raw: dict[str, Any]
     doc_type: str = "unknown"
     quality_flags: list[str] | None = None
+    extracted: dict[str, Any] | None = None
 
 
 def persistence_enabled() -> bool:
@@ -94,6 +95,7 @@ def save_document(doc: NewDocument) -> int:
         "mode": doc.mode,
         "doc_type": doc.doc_type,
         "quality_flags": Json(doc.quality_flags or []),
+        "extracted": Json(doc.extracted or {}),
         "markdown": doc.markdown,
         "raw": Json(doc.raw),
     }
@@ -101,10 +103,10 @@ def save_document(doc: NewDocument) -> int:
         doc_id = int(
             conn.execute(
                 "INSERT INTO documents (filename, mime, page_count, elapsed_ms, model,"
-                " mode, doc_type, quality_flags, markdown, raw)"
+                " mode, doc_type, quality_flags, extracted, markdown, raw)"
                 " VALUES (%(filename)s, %(mime)s, %(page_count)s, %(elapsed_ms)s,"
-                " %(model)s, %(mode)s, %(doc_type)s, %(quality_flags)s, %(markdown)s,"
-                " %(raw)s) RETURNING id",
+                " %(model)s, %(mode)s, %(doc_type)s, %(quality_flags)s, %(extracted)s,"
+                " %(markdown)s, %(raw)s) RETURNING id",
                 params,
             ).fetchone()[0]
         )
@@ -164,7 +166,8 @@ def get_document(doc_id: int) -> dict[str, Any] | None:
         cur = conn.cursor(row_factory=dict_row)
         doc = cur.execute(
             "SELECT filename, mime, page_count, elapsed_ms, model, mode, doc_type,"
-            " quality_flags, markdown, raw, created_at FROM documents WHERE id = %s",
+            " quality_flags, extracted, markdown, raw, created_at"
+            " FROM documents WHERE id = %s",
             (doc_id,),
         ).fetchone()
         if doc is None:
@@ -216,6 +219,7 @@ def get_document(doc_id: int) -> dict[str, Any] | None:
             "page_count": doc["page_count"],
             "doc_type": doc["doc_type"],
             "quality_flags": doc["quality_flags"],
+            "extracted": doc["extracted"],
             "created_at": doc["created_at"].isoformat(),
         },
     }

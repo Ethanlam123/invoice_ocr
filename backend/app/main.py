@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from . import config, db
 from .blocks import document_markdown, markdown_text, normalize_blocks, normalize_document
 from .classify import classify
+from .extract import extract_document
 from .images import (
     ImageValidationError,
     NormalizedImage,
@@ -145,6 +146,8 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
 
     doc_type, _confidence = classify(blocks)
     flags = quality_flags(blocks)
+    extracted, math_flags = extract_document(blocks, doc_type)
+    flags += math_flags
 
     meta: dict[str, Any] = {
         "elapsed_ms": elapsed_ms,
@@ -153,6 +156,7 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
         "page_count": len(pages),
         "doc_type": doc_type,
         "quality_flags": flags,
+        "extracted": extracted,
     }
     if db.persistence_enabled():
         # OCR already succeeded; a persistence failure must not discard the
@@ -168,6 +172,7 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
                     mode=backend.mode,
                     doc_type=doc_type,
                     quality_flags=flags,
+                    extracted=extracted,
                     pages=pages,
                     blocks=[b.model_dump() for b in data.blocks],
                     markdown=markdown,

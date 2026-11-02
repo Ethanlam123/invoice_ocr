@@ -233,3 +233,54 @@ all persisted to Postgres as a side-effect check of real-mode persistence):
 Suites: 12 new classify/quality tests; 59 pytest with TEST_DATABASE_URL
 (54 + 5 gated skips without), ruff, tsc, 8 vitest, 6 e2e (doc_type + flag
 chip assertions added), production build clean.
+
+## Phase 2: regex field extraction + arithmetic checks (2026-11-02)
+
+`app/extract.py`: per-doc-type schema registry (Python dict; invoice first),
+named-group regexes over block text, one joined-text fallback pass for
+label/value pairs split across blocks, and arithmetic validation
+(subtotal - discount + shipping + tax == total, qty x price == line amount,
+items sum == subtotal). Failures mark fields needs_review and merge into
+quality_flags; amounts are never auto-corrected.
+
+Measured on the same 7 real-inference files (each round below re-ran the
+full pipeline; recognition itself varied slightly between rounds):
+
+- invoice_no 7/7, issue_date 7/7 (after the cross-block fallback pass).
+- Totals against dataset annotations (mychen76 prints EU decimals):
+  ds_0 "7,50" -> 7.5 == annotated net 7.50; ds_1 -> 192.81 == 192.81;
+  ds_10 "$ 1 606,67" -> 1606.67 == 1606.67. All three were wrong before the
+  number-format fixes below. ds_100/ds_101 totals extracted self-consistently
+  (494.96 / 52257.34) but their annotation rows could not be re-matched by
+  offset, so they stay unverified.
+- Both self-made invoices pass arithmetic exactly (8600 + 860 == 9460;
+  subtotal == total on the no-tax fixture).
+- Zero arithmetic false positives across all runs.
+
+Bugs the measurement caught and fixed (each now has a regression test):
+
+1. EU decimal comma read as thousands ("$7,50" -> 7.0): money patterns and
+   table-cell numbers now parse US, EU and space-thousands formats
+   ("1,606.67" / "1.606,67" / "1 606,67"); a lone separator before exactly
+   3 digits is treated as thousands.
+2. Labels and values split across blocks ("Date of issue:" + next block):
+   single-block misses get one pass over the joined text (block=None).
+3. "Tax (10%):" style not matched; currency vocabulary missed HK$/US$/... -
+   both added.
+4. A "Gross worth" table header grabbed the next row's item quantity (1.0)
+   as the total: table flattening now keeps row boundaries (</tr> -> newline,
+   trailing spaces stripped) and money labels must have their value on the
+   same line.
+5. US-style dates (10/15/2012) flagged invalid: both day-first and month-first
+   are accepted; the check catches garble (13/45), not reading order.
+
+Known boundary, recorded honestly: mychen76's SUMMARY tables put
+net/VAT/gross in aligned columns; the extractor finds the net total line
+(values exactly match annotations) but cannot align a column header to its
+value - that needs structure-aware parsing or a model extractor, which is
+the Phase 4 decision point. mychen76 subtotal/tax are column-aligned too,
+so the arithmetic check only fires on documents with line-style totals
+(both self-made invoices).
+
+Suites: 70 pytest (+5 gated; 75 with TEST_DATABASE_URL), ruff, tsc,
+8 vitest, 6 e2e, production build all green.

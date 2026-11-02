@@ -56,6 +56,7 @@ export interface Envelope {
     document_id?: number;
     doc_type?: string;
     quality_flags?: string[];
+    extracted?: Record<string, { value: unknown; block?: number; needs_review?: boolean }>;
     filename?: string;
   } | null;
 }

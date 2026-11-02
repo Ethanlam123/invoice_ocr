@@ -173,3 +173,13 @@ def test_ocr_meta_has_no_document_id_without_database(client: TestClient) -> Non
     meta = r.json()["meta"]
     assert "document_id" not in meta
     assert "persistence" not in meta
+
+
+def test_ocr_meta_carries_classification_and_extraction(client: TestClient) -> None:
+    r = _post(client, _pdf_bytes([(300, 400), (300, 400)]), filename="a.pdf",
+              mime="application/pdf")
+    meta = r.json()["meta"]
+    assert meta["doc_type"] == "invoice"  # stub title is "INVOICE"
+    # stub page-2 text block "Total: 99.00" is extractable
+    assert meta["extracted"]["total"]["value"] == 99.0
+    assert meta["quality_flags"] == []
