@@ -116,3 +116,38 @@ def test_get_document_endpoint_404(pg_client: TestClient) -> None:
     body = pg_client.get("/api/documents/999999").json()
     assert body["success"] is False
     assert body["error"]["code"] == "not_found"
+
+
+def test_correct_block_round_trip(pg_client: TestClient) -> None:
+    r = pg_client.post(
+        "/api/ocr", files={"file": ("inv.png", png_bytes(200, 150), "image/png")}
+    )
+    doc_id = r.json()["meta"]["document_id"]
+    try:
+        before = pg_client.get(f"/api/documents/{doc_id}").json()
+        assert all(b["reviewed"] is False for b in before["data"]["blocks"])
+
+        fix = pg_client.patch(
+            f"/api/documents/{doc_id}/blocks/2",
+            json={"corrected_content": "Thank you (corrected)."},
+        )
+        assert fix.status_code == 200 and fix.json()["success"] is True
+
+        after = pg_client.get(f"/api/documents/{doc_id}").json()
+        block = next(b for b in after["data"]["blocks"] if b["id"] == 2)
+        assert block["content"] == "Thank you (corrected)."
+        assert block["reviewed"] is True
+        others = [b for b in after["data"]["blocks"] if b["id"] != 2]
+        assert all(b["reviewed"] is False for b in others)
+    finally:
+        delete_document(doc_id)
+
+
+def test_correct_block_rejects_empty_and_missing(pg_client: TestClient) -> None:
+    empty = pg_client.patch("/api/documents/1/blocks/0", json={"corrected_content": "  "})
+    assert empty.status_code == 400
+    missing = pg_client.patch(
+        "/api/documents/999999/blocks/0", json={"corrected_content": "x"}
+    )
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "not_found"

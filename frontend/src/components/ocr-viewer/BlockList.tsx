@@ -11,6 +11,8 @@ interface BlockListProps {
   onSelect: (id: number) => void;
   onKey: (event: React.KeyboardEvent<HTMLDivElement>) => void;
   showPages?: boolean;
+  canCorrect?: boolean; // only for stored documents (needs a document id)
+  onCorrect?: (blockId: number, content: string) => Promise<boolean>;
 }
 
 function BlockItem({
@@ -18,15 +20,32 @@ function BlockItem({
   index,
   selected,
   showPages,
+  canCorrect,
   onSelect,
+  onCorrect,
 }: {
   block: Block;
   index: number;
   selected: boolean;
   showPages: boolean;
+  canCorrect: boolean;
   onSelect: (id: number) => void;
+  onCorrect: (blockId: number, content: string) => Promise<boolean>;
 }) {
   const [showSource, setShowSource] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  // tables carry model HTML; editing raw HTML by hand is not a review flow
+  const correctable = canCorrect && !block.content_html && !editing;
+
+  async function save() {
+    if (saving) return;
+    setSaving(true);
+    const ok = await onCorrect(block.id, draft);
+    setSaving(false);
+    if (ok) setEditing(false);
+  }
 
   return (
     <li className="block-item" id={`block-opt-${block.id}`}>
@@ -42,6 +61,7 @@ function BlockItem({
           <span className="block-label">{block.label}</span>
           {showPages && <span className="block-page">{pageLabel(block)}</span>}
           <span className="block-id">#{block.id}</span>
+          {block.reviewed && <span className="block-reviewed">reviewed</span>}
           {block.content_html && (
             <span
               role="button"
@@ -62,6 +82,28 @@ function BlockItem({
               {showSource ? "table" : "source"}
             </span>
           )}
+          {selected && correctable && (
+            <span
+              role="button"
+              tabIndex={0}
+              className="block-toggle block-toggle-correct"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDraft(block.content);
+                setEditing(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setDraft(block.content);
+                  setEditing(true);
+                }
+              }}
+            >
+              correct
+            </span>
+          )}
         </span>
         {block.content_html && !showSource ? (
           // Server-sanitized table HTML (nh3 allowlist); see backend/app/blocks.py
@@ -70,11 +112,41 @@ function BlockItem({
           <pre className="block-text">{block.content}</pre>
         )}
       </button>
+      {editing && (
+        <div className="block-editor">
+          <textarea
+            aria-label={`Correct block ${block.id}`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={3}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setEditing(false);
+              e.stopPropagation();
+            }}
+          />
+          <div className="block-editor-actions">
+            <button type="button" className="btn" onClick={save} disabled={saving}>
+              {saving ? "Saving..." : "Save correction"}
+            </button>
+            <button type="button" className="btn" onClick={() => setEditing(false)} disabled={saving}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </li>
   );
 }
 
-export default function BlockList({ blocks, selectedId, onSelect, onKey, showPages = false }: BlockListProps) {
+export default function BlockList({
+  blocks,
+  selectedId,
+  onSelect,
+  onKey,
+  showPages = false,
+  canCorrect = false,
+  onCorrect = async () => false,
+}: BlockListProps) {
   useEffect(() => {
     if (selectedId == null) return;
     document.getElementById(`block-opt-${selectedId}`)?.scrollIntoView({
@@ -103,7 +175,9 @@ export default function BlockList({ blocks, selectedId, onSelect, onKey, showPag
               index={i}
               selected={b.id === selectedId}
               showPages={showPages}
+              canCorrect={canCorrect}
               onSelect={onSelect}
+              onCorrect={onCorrect}
             />
           ))}
         </ol>

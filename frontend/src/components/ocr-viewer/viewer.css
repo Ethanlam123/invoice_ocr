@@ -249,6 +249,47 @@
   cursor: help;
 }
 
+.history-flags {
+  color: var(--danger);
+}
+
+.block-reviewed {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.block-toggle-correct:hover {
+  color: var(--accent);
+}
+
+.block-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--accent);
+  border-top: none;
+  background: var(--paper);
+}
+
+.block-editor textarea {
+  width: 100%;
+  border: 1px solid var(--hairline-strong);
+  background: var(--surface);
+  padding: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  resize: vertical;
+}
+
+.block-editor-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 /* ---- Status bar ---- */
 
 .status-bar {

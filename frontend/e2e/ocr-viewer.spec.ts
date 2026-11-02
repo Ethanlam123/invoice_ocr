@@ -350,7 +350,7 @@ test("history strip lists stored documents and reopens one", async ({ page }) =>
             },
             {
               id: 1, filename: "invoice.pdf", doc_type: "unknown", page_count: 2,
-              quality_flags: [], created_at: "2026-11-02T09:00:00+00:00",
+              quality_flags: ["garbled:block-2"], created_at: "2026-11-02T09:00:00+00:00",
             },
           ],
         },
@@ -363,10 +363,75 @@ test("history strip lists stored documents and reopens one", async ({ page }) =>
   await page.goto("/");
 
   await expect(page.locator(".history-item")).toHaveCount(2);
+  // documents carrying quality flags show a flag count
+  await expect(page.locator(".history-flags", { hasText: "1 flag" })).toBeVisible();
 
   // opening a stored document renders it exactly like a fresh OCR result
   await page.locator(".history-item", { hasText: "receipt.png" }).click();
   await expect(page.getByText("5 blocks in")).toBeVisible();
   await expect(page.locator(".overlay-rect")).toHaveCount(5);
   await expect(page.locator(".history-item").first()).toHaveClass(/history-item-active/);
+});
+
+test("review flow: correct a block of a stored document", async ({ page }) => {
+  await mockEmptyHistory(page);
+  const doc = envelope();
+  const stored = {
+    ...doc,
+    meta: {
+      ...doc.meta,
+      document_id: 7,
+      filename: "stored.png",
+      doc_type: "invoice",
+      quality_flags: [],
+    },
+    data: {
+      ...doc.data,
+      blocks: [
+        {
+          id: 0, order: 0, label: "text", bbox: [10, 10, 100, 40],
+          content: "ACME Corp - misread tail", content_html: null,
+          page: 0, page_end: 0, reviewed: false,
+        },
+      ],
+    },
+  };
+  let patchBody: Record<string, string> | null = null;
+  await page.route("**/api/documents", (route) =>
+    route.fulfill({
+      json: {
+        success: true,
+        data: {
+          documents: [
+            {
+              id: 7, filename: "stored.png", doc_type: "invoice", page_count: 1,
+              quality_flags: [], created_at: "2026-11-02T11:00:00+00:00",
+            },
+          ],
+        },
+        error: null,
+        meta: { count: 1 },
+      },
+    }),
+  );
+  await page.route("**/api/documents/7", (route) => route.fulfill({ json: stored }));
+  await page.route("**/api/documents/7/blocks/0", async (route) => {
+    patchBody = route.request().postDataJSON() as Record<string, string>;
+    await route.fulfill({ json: { success: true, data: null, error: null, meta: {} } });
+  });
+
+  await page.goto("/");
+  await page.locator(".history-item", { hasText: "stored.png" }).click();
+  await expect(page.getByText("1 blocks in")).toBeVisible();
+
+  // select the block -> "correct" appears -> editor -> save -> PATCH fired
+  await page.locator("#block-opt-0 .block-button").click();
+  await page.locator(".block-toggle-correct").click();
+  await expect(page.locator(".block-editor textarea")).toBeVisible();
+  await page.locator(".block-editor textarea").fill("ACME Corp");
+  await page.getByRole("button", { name: "Save correction" }).click();
+
+  await expect(page.locator(".block-reviewed")).toBeVisible();
+  expect(patchBody).toEqual({ corrected_content: "ACME Corp" });
+  await expect(page.locator(".block-text")).toHaveText("ACME Corp");
 });

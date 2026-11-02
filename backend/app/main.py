@@ -28,6 +28,7 @@ from .images import (
 from .pipeline import InferenceError, OcrBackend, build_backend
 from .quality import quality_flags
 from .schemas import (
+    BlockCorrection,
     DocumentListData,
     DocumentSummary,
     Envelope,
@@ -40,7 +41,7 @@ app = FastAPI(title="Invoice OCR Viewer API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(config.ALLOWED_ORIGINS),
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -209,3 +210,17 @@ async def get_document(doc_id: int) -> Envelope:
     meta = doc.pop("meta")
     # validates stored rows against the same contract the live endpoint emits
     return Envelope(success=True, data=OcrData(**doc), meta=meta)
+
+
+@app.patch("/api/documents/{doc_id}/blocks/{block_id}")
+async def correct_block(doc_id: int, block_id: int, correction: BlockCorrection) -> Envelope:
+    """Store a human correction for one block (review workflow)."""
+    if not db.persistence_enabled():
+        return fail(503, "persistence_disabled", "DATABASE_URL is not set; history is off.")
+    body = correction.corrected_content.strip()
+    if not body:
+        return fail(400, "invalid_request", "corrected_content must not be empty.")
+    updated = await asyncio.to_thread(db.correct_block, doc_id, block_id, body)
+    if not updated:
+        return fail(404, "not_found", f"Block {block_id} of document {doc_id} not found.")
+    return Envelope(success=True, meta={"document_id": doc_id, "block_id": block_id})

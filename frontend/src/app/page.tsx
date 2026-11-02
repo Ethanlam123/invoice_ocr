@@ -10,7 +10,7 @@ import HistoryStrip from "@/components/ocr-viewer/HistoryStrip";
 import ImagePane from "@/components/ocr-viewer/ImagePane";
 import StatusBar from "@/components/ocr-viewer/StatusBar";
 import UploadPanel, { type Phase } from "@/components/ocr-viewer/UploadPanel";
-import { fetchDocument, fetchDocuments, runOcr } from "@/lib/api";
+import { correctBlock, fetchDocument, fetchDocuments, runOcr } from "@/lib/api";
 import { downloadJson, resultFilename, stepBlockId } from "@/lib/blocks";
 import type { ApiError, DocumentSummary, Envelope, OcrData } from "@/lib/types";
 
@@ -152,6 +152,29 @@ export default function Home() {
     [phase],
   );
 
+  const handleCorrect = useCallback(
+    async (blockId: number, content: string) => {
+      if (!activeDocId) return false;
+      const ok = await correctBlock(activeDocId, blockId, content);
+      if (ok) {
+        setResult((prev) =>
+          prev
+            ? {
+                ...prev,
+                blocks: prev.blocks.map((b) =>
+                  b.id === blockId
+                    ? { ...b, content, content_html: null, reviewed: true }
+                    : b,
+                ),
+              }
+            : prev,
+        );
+      }
+      return ok;
+    },
+    [activeDocId],
+  );
+
   const handleListKey = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (!result || result.blocks.length === 0) return;
@@ -239,6 +262,8 @@ export default function Home() {
               onSelect={setSelectedId}
               onKey={handleListKey}
               showPages={(result?.pages.length ?? 0) > 1}
+              canCorrect={activeDocId != null}
+              onCorrect={handleCorrect}
             />
           )}
         </aside>

@@ -34,6 +34,11 @@ export default function HistoryStrip({ documents, activeId, disabled, onOpen }: 
               <span className="history-meta">
                 <span className="history-doc-type">{doc.doc_type}</span>
                 {doc.page_count > 1 && <span>{doc.page_count} pages</span>}
+                {doc.quality_flags.length > 0 && (
+                  <span className="history-flags" title={doc.quality_flags.join("\n")}>
+                    {doc.quality_flags.length} flag{doc.quality_flags.length > 1 ? "s" : ""}
+                  </span>
+                )}
                 <span>{formatTime(doc.created_at)}</span>
               </span>
             </button>

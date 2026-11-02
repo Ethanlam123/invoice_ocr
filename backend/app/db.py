@@ -179,8 +179,8 @@ def get_document(doc_id: int) -> dict[str, Any] | None:
         ).fetchall()
         blocks = cur.execute(
             "SELECT block_id, block_order, page, page_end, page_bboxes, label, bbox,"
-            " content, content_html FROM blocks WHERE document_id = %s"
-            " ORDER BY page, block_order",
+            " content, content_html, corrected_content, reviewed_at"
+            " FROM blocks WHERE document_id = %s ORDER BY page, block_order",
             (doc_id,),
         ).fetchall()
     return {
@@ -203,8 +203,11 @@ def get_document(doc_id: int) -> dict[str, Any] | None:
                 "page_bboxes": b["page_bboxes"],
                 "label": b["label"],
                 "bbox": b["bbox"],
-                "content": b["content"],
-                "content_html": b["content_html"],
+                # human corrections override the OCR text on read (a corrected
+                # table block renders its text; stale HTML is dropped)
+                "content": b["corrected_content"] or b["content"],
+                "content_html": None if b["corrected_content"] else b["content_html"],
+                "reviewed": b["reviewed_at"] is not None,
             }
             for b in blocks
         ],
@@ -223,6 +226,17 @@ def get_document(doc_id: int) -> dict[str, Any] | None:
             "created_at": doc["created_at"].isoformat(),
         },
     }
+
+
+def correct_block(doc_id: int, block_id: int, corrected_content: str) -> bool:
+    """Store a human correction for one block. Returns False if no such block."""
+    with get_pool().connection() as conn:
+        cur = conn.execute(
+            "UPDATE blocks SET corrected_content = %s, reviewed_at = now()"
+            " WHERE document_id = %s AND block_id = %s",
+            (corrected_content, doc_id, block_id),
+        )
+        return cur.rowcount > 0
 
 
 def _png_data_url(image_path: str) -> str:

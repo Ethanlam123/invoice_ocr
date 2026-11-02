@@ -284,3 +284,30 @@ so the arithmetic check only fires on documents with line-style totals
 
 Suites: 70 pytest (+5 gated; 75 with TEST_DATABASE_URL), ruff, tsc,
 8 vitest, 6 e2e, production build all green.
+
+## Phase 3: review flow - block corrections (2026-11-02)
+
+`PATCH /api/documents/{id}/blocks/{block_id}` stores `corrected_content` +
+`reviewed_at`; `GET /api/documents/{id}` returns the corrected text as the
+block content with `reviewed: true` (stale table HTML is dropped for a
+corrected block). CORS now allows PATCH (the preflight OPTIONS was rejected
+before - caught live, not by any unit test: stub API tests run same-origin).
+
+Frontend: on a stored document, selecting a non-table block shows a
+"correct" toggle; the editor (textarea + save/cancel) PATCHes and updates
+the block in place with a "reviewed" chip. History items show a flag count
+badge. Table blocks are not hand-editable (model HTML).
+
+- Live stub-mode browser session (doc 118, a real earlier inference result):
+  correction round trip verified - PATCH -> psql row (`corrected_content`,
+  `reviewed_at` set) -> reload page -> reopen from history -> corrected text
+  and reviewed chip served from the DB.
+- One vision review of the open editor: textarea/buttons/reviewed chip/选中态
+  all correct; two notes - the "correct" toggle is hidden while the editor is
+  open (by design), and the editor's right border sits flush with the pane
+  edge (cosmetic, left as is).
+- e2e (mocked API): list badge, select -> correct -> save fires PATCH with
+  the exact body, UI shows the reviewed chip and updated text.
+
+Suites: 70 pytest (+7 gated; 77 with TEST_DATABASE_URL), ruff, tsc,
+8 vitest, 7 e2e, production build all green.

@@ -13,6 +13,7 @@ export interface Block {
   page: number;
   page_end: number; // > page when the block spans pages (merged cross-page table)
   page_bboxes?: PageBBox[] | null; // one bbox per page on spanning blocks
+  reviewed?: boolean; // a stored human correction overrides this block
 }
 
 export interface PageInfo {

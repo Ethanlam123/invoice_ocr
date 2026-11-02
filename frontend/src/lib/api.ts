@@ -61,3 +61,23 @@ export async function fetchDocument(id: number): Promise<Envelope | null> {
     return null;
   }
 }
+
+// store a human correction for one block of a stored document
+export async function correctBlock(
+  docId: number,
+  blockId: number,
+  content: string,
+): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/api/documents/${docId}/blocks/${blockId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ corrected_content: content }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const env = (await res.json()) as Envelope;
+    return env.success === true;
+  } catch {
+    return false;
+  }
+}

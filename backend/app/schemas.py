@@ -18,6 +18,7 @@ class BlockOut(BaseModel):
     page_end: int = 0  # > page when the block spans pages (merged table)
     # present only on spanning blocks: one bbox per page (owner first)
     page_bboxes: list[dict[str, Any]] | None = None
+    reviewed: bool = False  # a human correction is stored for this block
 
 
 class PageOut(BaseModel):
@@ -46,6 +47,10 @@ class DocumentSummary(BaseModel):
 
 class DocumentListData(BaseModel):
     documents: list[DocumentSummary]
+
+
+class BlockCorrection(BaseModel):
+    corrected_content: str
 
 
 class ErrorOut(BaseModel):

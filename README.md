@@ -245,10 +245,18 @@ deterministic fake blocks and needs neither the MLX server nor the layout model:
 5. Every run is classified by keyword rules (invoice / receipt /
    purchase_order / unknown, from heading-class and leading text blocks);
    the status bar shows the type plus any OCR quality flags (garbled text,
-   sparse blocks, ragged tables). Flags are advisory - they never alter
-   content. Recognition noise can hide the keyword (measured on real
-   samples; see docs/VALIDATION.md).
-6. Download JSON returns the raw pipeline result (`parsing_res_list`,
+   sparse blocks, ragged tables), and common fields (invoice number, dates,
+   subtotal/tax/total) are extracted by regex with arithmetic checks
+   (subtotal - discount + shipping + tax == total; bad sums mark fields
+   needs_review; amounts are never auto-corrected). Flags are advisory.
+   Recognition noise can hide keywords (measured on real samples; see
+   docs/VALIDATION.md).
+6. Review flow (stored documents only): select a non-table block, press
+   "correct", edit the text, save - the correction is stored
+   (`corrected_content` + `reviewed_at`) and the block is marked reviewed;
+   corrected text replaces the OCR text on every later read. Table blocks
+   carry model-generated HTML and are not hand-editable.
+7. Download JSON returns the raw pipeline result (`parsing_res_list`,
    `layout_det_res`, dimensions; multi-page wrapped in `pages`).
 
 ## Tests
