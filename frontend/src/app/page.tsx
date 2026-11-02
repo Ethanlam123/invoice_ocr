@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import "@/components/ocr-viewer/viewer.css";
@@ -10,7 +11,7 @@ import HistoryStrip from "@/components/ocr-viewer/HistoryStrip";
 import ImagePane from "@/components/ocr-viewer/ImagePane";
 import StatusBar from "@/components/ocr-viewer/StatusBar";
 import UploadPanel, { type Phase } from "@/components/ocr-viewer/UploadPanel";
-import { correctBlock, fetchDocument, fetchDocuments, runOcr } from "@/lib/api";
+import { correctBlock, fetchDocument, fetchDocuments, runOcr, saveDocument } from "@/lib/api";
 import { downloadJson, resultFilename, stepBlockId } from "@/lib/blocks";
 import type { ApiError, DocumentSummary, Envelope, OcrData } from "@/lib/types";
 
@@ -25,6 +26,7 @@ export default function Home() {
   const [liveElapsed, setLiveElapsed] = useState(0);
   const [previewDims, setPreviewDims] = useState<{ width: number; height: number } | null>(null);
   const [history, setHistory] = useState<DocumentSummary[] | null>(null); // null = persistence off
+  const [saving, setSaving] = useState(false);
   const [activeDocId, setActiveDocId] = useState<number | null>(null);
   const [historyName, setHistoryName] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -97,16 +99,39 @@ export default function Home() {
       setResult(env.data);
       setMeta(env.meta);
       setPhase("done");
-      if (env.meta?.document_id) {
-        setActiveDocId(env.meta.document_id);
-        refreshHistory();
-      }
     } else {
       setResult(null);
       setError(env.error ?? { code: "unknown_error", message: "Unexpected empty response." });
       setPhase("error");
     }
   }, [file, phase]);
+
+  const handleSave = useCallback(async () => {
+    if (!result || !file || activeDocId != null || saving) return;
+    setSaving(true);
+    const id = await saveDocument({
+      filename: file.name,
+      mime: file.type || "image/png",
+      elapsed_ms: meta?.elapsed_ms ?? 0,
+      model: meta?.model ?? "",
+      mode: meta?.mode ?? "",
+      doc_type: meta?.doc_type ?? "unknown",
+      quality_flags: meta?.quality_flags ?? [],
+      extracted: meta?.extracted ?? null,
+      pages: result.pages,
+      blocks: result.blocks,
+      markdown: result.markdown,
+      raw: result.raw,
+    });
+    setSaving(false);
+    if (id == null) {
+      setError({ code: "save_failed", message: "Could not save to history. Try again." });
+      return;
+    }
+    setError(null);
+    setActiveDocId(id); // unlocks corrections; hides the Save button
+    refreshHistory();
+  }, [result, file, activeDocId, saving, meta, refreshHistory]);
 
   const handleReset = useCallback(() => {
     setFile(null);
@@ -151,6 +176,14 @@ export default function Home() {
     },
     [phase],
   );
+
+  // deep link: /?doc=<id> (the history page) opens that stored document once
+  const openRef = useRef(handleOpenDocument);
+  openRef.current = handleOpenDocument;
+  useEffect(() => {
+    const id = Number(new URLSearchParams(window.location.search).get("doc"));
+    if (Number.isInteger(id) && id > 0) openRef.current(id);
+  }, []);
 
   const handleCorrect = useCallback(
     async (blockId: number, content: string) => {
@@ -205,7 +238,19 @@ export default function Home() {
             <span className="wordmark-sub">PaddleOCR-VL x MLX - local inference</span>
           </span>
         </div>
-        <UploadPanel phase={phase} disabled={phase === "processing"} onFile={handleFile} onRun={handleRun} />
+        <div className="header-actions">
+          {history != null && (
+            <Link href="/history" className="btn">
+              History
+            </Link>
+          )}
+          <UploadPanel
+            phase={phase}
+            disabled={phase === "processing"}
+            onFile={handleFile}
+            onRun={handleRun}
+          />
+        </div>
       </header>
 
       {history && (
@@ -231,6 +276,9 @@ export default function Home() {
             model={meta?.model ?? null}
             docType={meta?.doc_type ?? null}
             qualityFlags={meta?.quality_flags ?? null}
+            canSave={phase === "done" && result != null && history != null && activeDocId == null}
+            saving={saving}
+            onSave={handleSave}
             onDownload={() => result && downloadJson(result.raw, resultFilename())}
             onReset={handleReset}
           />

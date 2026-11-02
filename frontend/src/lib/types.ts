@@ -38,11 +38,29 @@ export interface DocumentSummary {
   page_count: number;
   quality_flags: string[];
   created_at: string;
+  block_count?: number; // from the list query; absent in older fixtures
+  reviewed_count?: number;
 }
 
 export interface ApiError {
   code: string;
   message: string;
+}
+
+// what the Save button posts: the in-browser OCR result plus its meta
+export interface SaveDocumentBody {
+  filename: string;
+  mime: string;
+  elapsed_ms: number;
+  model: string;
+  mode: string;
+  doc_type: string;
+  quality_flags: string[];
+  extracted: Record<string, { value: unknown; block?: number; needs_review?: boolean }> | null;
+  pages: PageInfo[];
+  blocks: Block[];
+  markdown: string;
+  raw: Record<string, unknown>;
 }
 
 export interface Envelope {

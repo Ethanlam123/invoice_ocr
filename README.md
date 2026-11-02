@@ -8,14 +8,15 @@ inference JSON. Tables that continue onto the next PDF page are merged into one
 block spanning both pages.
 
 All inference runs locally. No cloud APIs, no auth. Persistence is optional:
-with `DATABASE_URL` set, every run is stored in local Postgres and can be
-reopened from a history strip (see below); without it the app stays stateless.
+with `DATABASE_URL` set, a run is stored only when you click "Save to history"
+(it then reopens from the history strip and its blocks become correctable);
+without it the app stays stateless.
 
 ## Architecture
 
-An annotated one-page version of this section: [`docs/architecture.html`](docs/architecture.html)
-(open directly in a browser - self-contained, no server needed), also exported to
-[`docs/architecture.pdf`](docs/architecture.pdf) (A4, 3 pages, natural size;
+A visual overview of this section, with screenshots of the running app:
+[`docs/architecture.html`](docs/architecture.html) (self-contained - just open it
+in a browser) and [`docs/architecture.pdf`](docs/architecture.pdf) (A4, 4 pages;
 regenerate with `node scripts/export_architecture_pdf.mjs`).
 
 Three local processes. `scripts/dev.sh` starts all of them (and refuses to start
@@ -30,26 +31,28 @@ flowchart TB
     S3["3 · Infer<br/>PaddleOCR-VL · CPU<br/>one at a time"]
     S4["4 · Shape<br/>blocks, safe tables"]
     VLM["MLX-VLM server · :8111<br/>PaddleOCR-VL 1.6 · 4-bit<br/>recognition only"]
+    DB["Postgres · Docker :5433<br/>optional persistence<br/>saved runs · corrections"]
 
     UI -->|"POST /api/ocr"| S1
     S1 --> S2 --> S3 --> S4
     S4 -->|"results"| UI
     S3 <-->|"block crops / text"| VLM
+    UI -->|"Save / history · /api/documents"| DB
 
     classDef browser fill:#ffffff,stroke:#1c2333,color:#1c2333,stroke-width:1.5px
     classDef stage fill:#e9edfb,stroke:#2e4bdc,color:#1c2333
     classDef model fill:#e6e7ea,stroke:#8a8f9c,color:#1c2333,stroke-dasharray:5 4
     class UI browser
     class S1,S2,S3,S4 stage
-    class VLM model
+    class VLM,DB model
     linkStyle default stroke:#6b7280,stroke-width:1.5px
     linkStyle 4 stroke:#2e4bdc,stroke-width:2px
 ```
 
 Legend: blue = the four stages inside the FastAPI backend (`backend/`,
-:8000); dashed gray = the one separate process it talks to. Layout
-(PP-DocLayoutV3) runs in-process on CPU, so it is part of stage 3, not a
-separate box.
+:8000); dashed gray = services outside the request path (the MLX server, and
+the optional Postgres the reviewer saves runs into). Layout (PP-DocLayoutV3)
+runs in-process on CPU, so it is part of stage 3, not a separate box.
 
 Stage detail (numbers match the diagram):
 
@@ -127,6 +130,10 @@ Error envelope: `{ "success": false, "data": null, "error": { "code", "message" 
 | 500 | `inference_failed` / `normalization_failed` | pipeline error or malformed output |
 | - | `timeout` / `network_error` | client-side (fetch failed or 5 min cap) |
 
+The documents endpoints add: 400 `invalid_request` (bad save payload, empty
+correction), 404 `not_found` (no such document/block), and 503
+`persistence_disabled` (no `DATABASE_URL`).
+
 ### Configuration
 
 | Variable | Default | Used by |
@@ -143,8 +150,10 @@ CORS allows only `localhost:3000` / `127.0.0.1:3000`.
 ### Optional: Postgres persistence
 
 Without `DATABASE_URL` the app is exactly the stateless v1 (no DB needed).
-With it, every successful OCR run is stored (documents + pages + blocks) and a
-"Recent" strip in the UI can reopen any stored document:
+With it, a run is stored only when you click "Save to history" (documents +
+pages + blocks), a "Recent" strip in the UI can reopen any stored document,
+and a `/history` page browses everything stored (search, block/review counts,
+delete):
 
 ```bash
 brew install postgresql@17 && brew services start postgresql@17
@@ -154,9 +163,14 @@ DATABASE_URL="postgresql://localhost/invoice_ocr" uv run uvicorn app.main:app --
 
 - Schema is applied automatically on first use (`backend/app/schema.sql`, idempotent)
 - Page images live under `DATA_DIR/documents/<id>/`; the DB stores paths only
-- New endpoints: `GET /api/documents` (list) and `GET /api/documents/{id}`
-  (same data shape as `POST /api/ocr`, so the viewer renders stored documents
-  with the identical components)
+  (the DB without `data/` is not portable - reads of missing files fail with
+  `storage_error`)
+- The list endpoints return the newest 50 documents (no pagination yet)
+- Endpoints: `POST /api/documents` (the Save button), `GET /api/documents`
+  (list, with block/reviewed counts), `GET /api/documents/{id}` (same data
+  shape as `POST /api/ocr`, so the viewer renders stored documents with the
+  identical components; `/?doc=<id>` deep-links to one) and
+  `DELETE /api/documents/{id}` (the history page's Delete)
 - A persistence failure never discards an OCR result: the response still
   succeeds and `meta.persistence = "failed"` marks it
 - No ORM by decision: the whole path is four fixed statements and the pipeline
@@ -171,7 +185,8 @@ backend/     FastAPI app: main.py (routes), images.py (validation/EXIF/PDF),
              db.py + schema.sql (optional Postgres persistence), schemas.py
              (envelope), config.py; tests/ (pytest, stub-only + gated SQL tests)
 vlm-server/  uv project holding only mlx-vlm (isolated from paddle deps)
-frontend/    Next.js app: app/page.tsx (state machine),
+frontend/    Next.js app: app/page.tsx (state machine) + app/history/ (stored
+             documents page),
              components/ocr-viewer/ (UploadPanel, ImagePane+SVG overlay,
              BlockList, StatusBar, ErrorBanner, HistoryStrip), lib/ (api, types, blocks)
 scripts/     dev.sh, make_sample_invoice.py, make_multi_page_invoice.py,
@@ -241,7 +256,9 @@ deterministic fake blocks and needs neither the MLX server nor the layout model:
    arrows or j / k step through blocks; Esc clears. Table blocks render as
    sanitized HTML with a source toggle.
 4. With persistence on, a Recent strip under the header lists stored
-   documents; clicking one reopens it exactly as it was first rendered.
+   documents; clicking one reopens it exactly as it was first rendered. The
+   History page (header link, `/history`) lists everything stored with search,
+   per-document block and review counts, and delete.
 5. Every run is classified by keyword rules (invoice / receipt /
    purchase_order / unknown, from heading-class and leading text blocks);
    the status bar shows the type plus any OCR quality flags (garbled text,
@@ -292,9 +309,9 @@ stored annotations are used only as a labeled reference (`ast.literal_eval`, nev
 
 ## Known limitations (v1)
 
-- Layout blocks only; no per-word boxes, no business-field extraction yet
-  (doc-type classification and quality flags exist; field extraction is the
-  next phase).
+- Layout blocks only; no per-word boxes. Field extraction is regex-based
+  (invoice number, dates, subtotal/tax/total) with arithmetic checks; fields
+  the rules cannot find stay empty rather than guessed.
 - Classification is keyword-based: a document whose self-identifying word is
   misread by OCR (observed on one sample) or absent falls to `unknown`.
 - Quality heuristics are Latin-script-centric; CJK garble does not trip the

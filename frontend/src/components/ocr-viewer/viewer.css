@@ -56,6 +56,12 @@
 
 /* ---- Upload ---- */
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
 .upload-panel {
   display: flex;
   align-items: center;

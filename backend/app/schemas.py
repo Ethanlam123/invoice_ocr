@@ -43,6 +43,9 @@ class DocumentSummary(BaseModel):
     page_count: int
     quality_flags: list[str]
     created_at: str
+    # defaults keep hand-written fixtures valid; the list query fills both
+    block_count: int = 0
+    reviewed_count: int = 0
 
 
 class DocumentListData(BaseModel):
@@ -51,6 +54,23 @@ class DocumentListData(BaseModel):
 
 class BlockCorrection(BaseModel):
     corrected_content: str
+
+
+class SaveDocumentIn(BaseModel):
+    """A completed OCR run the reviewer chose to keep (Save button)."""
+
+    filename: str
+    mime: str
+    elapsed_ms: int
+    model: str
+    mode: str
+    doc_type: str = "unknown"
+    quality_flags: list[str] = []
+    extracted: dict[str, Any] | None = None
+    pages: list[PageOut]
+    blocks: list[BlockOut]
+    markdown: str
+    raw: dict[str, Any]
 
 
 class ErrorOut(BaseModel):

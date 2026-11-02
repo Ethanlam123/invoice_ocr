@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import time
 import urllib.request
 from typing import Annotated, Any
@@ -35,13 +36,14 @@ from .schemas import (
     ErrorOut,
     OcrData,
     PageOut,
+    SaveDocumentIn,
 )
 
 app = FastAPI(title="Invoice OCR Viewer API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(config.ALLOWED_ORIGINS),
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -104,8 +106,6 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
     except ImageValidationError as exc:
         status = 413 if exc.code == "file_too_large" else 400
         return fail(status, exc.code, exc.message)
-    # computed while `data` is still the upload bytes (it is reused below)
-    upload_mime = "application/pdf" if is_pdf(data) else file.content_type or "image/png"
 
     started = time.perf_counter()
     try:
@@ -159,30 +159,49 @@ async def ocr(file: UploadFile, backend: BackendDep) -> Envelope:
         "quality_flags": flags,
         "extracted": extracted,
     }
-    if db.persistence_enabled():
-        # OCR already succeeded; a persistence failure must not discard the
-        # result the user waited for - surface it in meta instead.
-        try:
-            meta["document_id"] = await asyncio.to_thread(
-                db.save_document,
-                db.NewDocument(
-                    filename=file.filename or "upload",
-                    mime=upload_mime,
-                    elapsed_ms=elapsed_ms,
-                    model=meta["model"],
-                    mode=backend.mode,
-                    doc_type=doc_type,
-                    quality_flags=flags,
-                    extracted=extracted,
-                    pages=pages,
-                    blocks=[b.model_dump() for b in data.blocks],
-                    markdown=markdown,
-                    raw=raw,
-                ),
-            )
-        except Exception:
-            meta["persistence"] = "failed"
+    # Storage is a separate reviewer decision (POST /api/documents, the UI
+    # Save button) - the OCR run itself stays side-effect free.
     return Envelope(success=True, data=data, meta=meta)
+
+
+@app.post("/api/documents")
+async def save_document(payload: SaveDocumentIn) -> Envelope:
+    """Persist a completed OCR run the reviewer chose to keep."""
+    if not db.persistence_enabled():
+        return fail(503, "persistence_disabled", "DATABASE_URL is not set; history is off.")
+    pages: list[NormalizedImage] = []
+    total_bytes = 0
+    try:
+        for p in payload.pages:
+            header, sep, b64 = p.data_url.partition(",")
+            if not sep or not header.startswith("data:") or ";base64" not in header:
+                raise ValueError("not a base64 data URL")
+            png = base64.b64decode(b64, validate=True)
+            total_bytes += len(png)
+            # cap matches the worst case the OCR flow itself can emit
+            if total_bytes > config.MAX_FILE_BYTES * config.MAX_PDF_PAGES:
+                raise ValueError("page images exceed the size limit")
+            pages.append(load_normalized(png))
+    except (ValueError, binascii.Error):
+        return fail(400, "invalid_request", "pages must be valid base64 PNG data URLs.")
+    doc_id = await asyncio.to_thread(
+        db.save_document,
+        db.NewDocument(
+            filename=payload.filename,
+            mime=payload.mime,
+            elapsed_ms=payload.elapsed_ms,
+            model=payload.model,
+            mode=payload.mode,
+            doc_type=payload.doc_type,
+            quality_flags=payload.quality_flags,
+            extracted=payload.extracted,
+            pages=pages,
+            blocks=[b.model_dump() for b in payload.blocks],
+            markdown=payload.markdown,
+            raw=payload.raw,
+        ),
+    )
+    return Envelope(success=True, data=None, meta={"document_id": doc_id})
 
 
 @app.get("/api/documents")
@@ -210,6 +229,17 @@ async def get_document(doc_id: int) -> Envelope:
     meta = doc.pop("meta")
     # validates stored rows against the same contract the live endpoint emits
     return Envelope(success=True, data=OcrData(**doc), meta=meta)
+
+
+@app.delete("/api/documents/{doc_id}")
+async def delete_document(doc_id: int) -> Envelope:
+    """Remove a stored document (rows + page files) - the history page's Delete."""
+    if not db.persistence_enabled():
+        return fail(503, "persistence_disabled", "DATABASE_URL is not set; history is off.")
+    deleted = await asyncio.to_thread(db.delete_document, doc_id)
+    if not deleted:
+        return fail(404, "not_found", f"Document {doc_id} not found.")
+    return Envelope(success=True)
 
 
 @app.patch("/api/documents/{doc_id}/blocks/{block_id}")

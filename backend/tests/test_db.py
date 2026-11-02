@@ -91,11 +91,29 @@ def test_save_failure_cleans_up_files(pg, monkeypatch: pytest.MonkeyPatch) -> No
     assert not docs_dir.exists() or not any(docs_dir.iterdir())
 
 
-def test_ocr_persists_and_history_round_trip(pg_client: TestClient) -> None:
+def _save_after_run(pg_client: TestClient, filename: str = "inv.png") -> int:
+    """Run a stub OCR then store it via the save endpoint (the UI's Save button)."""
     r = pg_client.post(
-        "/api/ocr", files={"file": ("inv.png", png_bytes(200, 150), "image/png")}
+        "/api/ocr", files={"file": (filename, png_bytes(200, 150), "image/png")}
     )
-    doc_id = r.json()["meta"]["document_id"]
+    body = r.json()  # exactly what the UI holds after a run
+    save = pg_client.post(
+        "/api/documents",
+        json={
+            "filename": filename, "mime": "image/png",
+            "elapsed_ms": body["meta"]["elapsed_ms"], "model": body["meta"]["model"],
+            "mode": body["meta"]["mode"], "doc_type": body["meta"]["doc_type"],
+            "quality_flags": body["meta"]["quality_flags"],
+            "extracted": body["meta"].get("extracted"),
+            "pages": body["data"]["pages"], "blocks": body["data"]["blocks"],
+            "markdown": body["data"]["markdown"], "raw": body["data"]["raw"],
+        },
+    )
+    return save.json()["meta"]["document_id"]
+
+
+def test_ocr_then_save_history_round_trip(pg_client: TestClient) -> None:
+    doc_id = _save_after_run(pg_client)
     try:
         listed = pg_client.get("/api/documents").json()
         assert listed["success"] is True
@@ -112,6 +130,65 @@ def test_ocr_persists_and_history_round_trip(pg_client: TestClient) -> None:
         delete_document(doc_id)
 
 
+def _save_payload() -> dict:
+    """A SaveDocumentIn body matching what the UI sends after an OCR run."""
+    b64 = png_bytes(120, 90)
+    import base64
+
+    return {
+        "filename": "inv.png", "mime": "image/png", "elapsed_ms": 42,
+        "model": "stub", "mode": "stub", "doc_type": "invoice",
+        "quality_flags": [], "extracted": None,
+        "pages": [{
+            "index": 0, "width": 120, "height": 90, "mime": "image/png",
+            "data_url": "data:image/png;base64," + base64.b64encode(b64).decode(),
+        }],
+        "blocks": _blocks(),
+        "markdown": "# hi",
+        "raw": {"res": {"x": 1}},
+    }
+
+
+def test_ocr_run_writes_nothing_until_saved(pg_client: TestClient) -> None:
+    before = pg_client.get("/api/documents").json()["meta"]["count"]
+    r = pg_client.post(
+        "/api/ocr", files={"file": ("inv.png", png_bytes(200, 150), "image/png")}
+    )
+    assert r.status_code == 200
+    assert "document_id" not in r.json()["meta"]  # Save button decides, not the run
+    assert pg_client.get("/api/documents").json()["meta"]["count"] == before
+
+
+def test_save_document_endpoint_round_trip(pg_client: TestClient) -> None:
+    r = pg_client.post("/api/documents", json=_save_payload())
+    assert r.status_code == 200
+    doc_id = r.json()["meta"]["document_id"]
+    try:
+        detail = pg_client.get(f"/api/documents/{doc_id}").json()
+        assert detail["success"] is True
+        assert detail["data"]["pages"][0]["width"] == 120
+        assert detail["data"]["blocks"][1]["content"] == "Total: 99.00"
+        assert detail["meta"]["doc_type"] == "invoice"
+        listed_ids = [d["id"] for d in pg_client.get("/api/documents").json()["data"]["documents"]]
+        assert doc_id in listed_ids
+    finally:
+        delete_document(doc_id)
+
+
+def test_save_document_rejects_bad_data_url(pg_client: TestClient) -> None:
+    payload = _save_payload()
+    payload["pages"][0]["data_url"] = "data:image/png;base64,not-base64!!"
+    r = pg_client.post("/api/documents", json=payload)
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "invalid_request"
+
+
+def test_save_document_503_without_database(client: TestClient) -> None:
+    r = client.post("/api/documents", json=_save_payload())
+    assert r.status_code == 503
+    assert r.json()["error"]["code"] == "persistence_disabled"
+
+
 def test_get_document_endpoint_404(pg_client: TestClient) -> None:
     body = pg_client.get("/api/documents/999999").json()
     assert body["success"] is False
@@ -119,10 +196,7 @@ def test_get_document_endpoint_404(pg_client: TestClient) -> None:
 
 
 def test_correct_block_round_trip(pg_client: TestClient) -> None:
-    r = pg_client.post(
-        "/api/ocr", files={"file": ("inv.png", png_bytes(200, 150), "image/png")}
-    )
-    doc_id = r.json()["meta"]["document_id"]
+    doc_id = _save_after_run(pg_client)
     try:
         before = pg_client.get(f"/api/documents/{doc_id}").json()
         assert all(b["reviewed"] is False for b in before["data"]["blocks"])
@@ -151,3 +225,44 @@ def test_correct_block_rejects_empty_and_missing(pg_client: TestClient) -> None:
     )
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "not_found"
+
+
+def test_list_documents_includes_counts(pg_client: TestClient) -> None:
+    doc_id = _save_after_run(pg_client)
+    try:
+        fix = pg_client.patch(
+            f"/api/documents/{doc_id}/blocks/2", json={"corrected_content": "fixed"}
+        )
+        assert fix.status_code == 200
+        entry = next(
+            d for d in pg_client.get("/api/documents").json()["data"]["documents"]
+            if d["id"] == doc_id
+        )
+        assert entry["block_count"] == 3  # the stub run emits 3 blocks
+        assert entry["reviewed_count"] == 1
+    finally:
+        delete_document(doc_id)
+
+
+def test_delete_document_round_trip(pg_client: TestClient) -> None:
+    doc_id = _save_after_run(pg_client, "del.png")
+    try:
+        r = pg_client.delete(f"/api/documents/{doc_id}")
+        assert r.status_code == 200 and r.json()["success"] is True
+        assert pg_client.get(f"/api/documents/{doc_id}").status_code == 404
+        listed = pg_client.get("/api/documents").json()["data"]["documents"]
+        assert doc_id not in [d["id"] for d in listed]
+    finally:
+        delete_document(doc_id)
+
+
+def test_delete_document_404(pg_client: TestClient) -> None:
+    missing = pg_client.delete("/api/documents/999999")
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "not_found"
+
+
+def test_delete_document_503_without_database(client: TestClient) -> None:
+    off = client.delete("/api/documents/1")
+    assert off.status_code == 503
+    assert off.json()["error"]["code"] == "persistence_disabled"

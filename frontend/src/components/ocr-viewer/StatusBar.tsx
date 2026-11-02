@@ -12,6 +12,9 @@ interface StatusBarProps {
   model: string | null;
   docType: string | null;
   qualityFlags: string[] | null;
+  canSave: boolean; // unsaved result + persistence on
+  saving: boolean;
+  onSave: () => void;
   onDownload: () => void;
   onReset: () => void;
 }
@@ -30,6 +33,9 @@ export default function StatusBar({
   model,
   docType,
   qualityFlags,
+  canSave,
+  saving,
+  onSave,
   onDownload,
   onReset,
 }: StatusBarProps) {
@@ -66,6 +72,11 @@ export default function StatusBar({
           <button type="button" className="btn" onClick={onReset}>
             New document
           </button>
+          {phase === "done" && canSave && (
+            <button type="button" className="btn" onClick={onSave} disabled={saving}>
+              {saving ? "Saving..." : "Save to history"}
+            </button>
+          )}
           {phase === "done" && (
             <button type="button" className="btn btn-primary" onClick={onDownload}>
               Download JSON

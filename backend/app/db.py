@@ -142,8 +142,11 @@ def list_documents(limit: int = 50) -> list[dict[str, Any]]:
     with get_pool().connection() as conn:
         cur = conn.cursor(row_factory=dict_row)
         rows = cur.execute(
-            "SELECT id, filename, doc_type, page_count, quality_flags, created_at"
-            " FROM documents ORDER BY id DESC LIMIT %s",
+            "SELECT d.id, d.filename, d.doc_type, d.page_count, d.quality_flags,"
+            " d.created_at, COUNT(b.id) AS block_count,"
+            " COUNT(b.reviewed_at) AS reviewed_count"
+            " FROM documents d LEFT JOIN blocks b ON b.document_id = d.id"
+            " GROUP BY d.id ORDER BY d.id DESC LIMIT %s",
             (limit,),
         ).fetchall()
     return [
@@ -154,9 +157,21 @@ def list_documents(limit: int = 50) -> list[dict[str, Any]]:
             "page_count": r["page_count"],
             "quality_flags": r["quality_flags"],
             "created_at": r["created_at"].isoformat(),
+            "block_count": r["block_count"],
+            "reviewed_count": r["reviewed_count"],
         }
         for r in rows
     ]
+
+
+def delete_document(doc_id: int) -> bool:
+    """Delete a stored document. Rows cascade; PNGs go after the commit so
+    files never vanish while the rows still exist. False = no such document."""
+    with get_pool().connection() as conn:
+        deleted = conn.execute("DELETE FROM documents WHERE id = %s", (doc_id,)).rowcount > 0
+    if deleted:
+        shutil.rmtree(config.DATA_DIR / "documents" / str(doc_id), ignore_errors=True)
+    return deleted
 
 
 def get_document(doc_id: int) -> dict[str, Any] | None:
